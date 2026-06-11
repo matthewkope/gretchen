@@ -33,7 +33,11 @@ node server.js        # ✻ Gretchen — http://localhost:5277
   archive ⌫, delete ✕, and a move-to-project dropdown.
 - **Sidebar** — inbox + projects (click to switch, + creates), tags with
   counts (click to filter), live stats.
-- **Calendar** — month grid of every project's due dates, today highlighted.
+- **Calendar** — month/week/day views of every project's due dates, with the
+  CLI's keys: `m`/`w`/`d` pick a view (`tab` or `v` cycles, `enter` zooms in),
+  `←`/`→` move a day, `↑`/`↓` a week, `shift+←/→` a whole period, `t` jumps
+  to today, `esc` returns to tasks. Click a day to select it, double-click
+  to open it.
 - **Archive** — grouped year / month / week, newest first, one-click
   unarchive.
 - **Time** — ▶ on any task starts a timer (⏹ in the top bar stops it; starting

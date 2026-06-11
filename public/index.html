@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>✻ Gretchen</title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="icon" href="mascot.png" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>✻</text></svg>" />
 </head>
 <body>
   <div id="app">
     <aside id="sidebar">
-      <div class="brand"><img id="mascot" src="mascot.png" alt="" /> Gretchen</div>
+      <div class="brand"><span class="spark">✻</span> Gretchen</div>
       <nav id="nav-views">
         <button class="navbtn active" data-view="board">tasks</button>
         <button class="navbtn" data-view="calendar">calendar</button>
@@ -54,12 +54,19 @@
 
       <section id="view-calendar" class="view hidden">
         <div id="cal-head">
-          <button id="cal-prev">‹</button>
+          <button id="cal-prev" title="previous (shift+←)">‹</button>
           <h1 id="cal-title"></h1>
-          <button id="cal-next">›</button>
-          <button id="cal-today">today</button>
+          <button id="cal-next" title="next (shift+→)">›</button>
+          <button id="cal-today" title="jump to today (t)">today</button>
+          <span class="spacer"></span>
+          <span id="cal-modes">
+            <button class="cal-mode" data-mode="month" title="month view (m)">month</button>
+            <button class="cal-mode" data-mode="week" title="week view (w)">week</button>
+            <button class="cal-mode" data-mode="day" title="day view (d)">day</button>
+          </span>
         </div>
         <div id="cal-grid"></div>
+        <div id="cal-foot" class="dim"></div>
       </section>
 
       <section id="view-archive" class="view hidden">

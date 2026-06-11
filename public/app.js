@@ -6,7 +6,8 @@ let S = null;            // last /api/state payload
 let project = 'inbox';   // current list
 let tagFilter = null;    // '#tag' or null
 let view = 'board';
-let calMonth = null;     // 'YYYY-MM' shown in the calendar
+let calCursor = null;    // Date the calendar cursor is on
+let calMode = 'month';   // month | week | day
 let editing = null;      // task index loaded into the prompt
 let sugSel = 0;          // selected row in the suggestion strip
 let suggestions = [];    // current strip items: { label, detail, apply }
@@ -394,6 +395,7 @@ function setView(v) {
   if (v === 'calendar') renderCalendar();
   if (v === 'time') renderTime();
   if (v === 'board') $('prompt').focus();
+  else document.activeElement?.blur(); // so calendar keys aren't eaten by a focused button
 }
 
 document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => setView(b.dataset.view)));
@@ -405,42 +407,139 @@ $('new-project').onclick = () => {
 $('file-btn').onclick = () => runCommand('/file');
 $('archive-done-btn').onclick = () => runCommand('/archive');
 
-/* calendar — month grid over every project's dated tasks */
-function renderCalendar() {
-  const [y, m] = (calMonth || S.today.slice(0, 7)).split('-').map(Number);
-  calMonth = `${y}-${String(m).padStart(2, '0')}`;
-  $('cal-title').textContent = new Date(y, m - 1, 1).toLocaleString('en', { month: 'long', year: 'numeric' });
+/* calendar — month/week/day views over every project's dated tasks,
+   with the CLI's keys: m/w/d, tab/v cycles, enter zooms, arrows move a day,
+   ↑/↓ a week, shift+←/→ a whole period, t = today, esc = back to tasks */
+const CAL_MODES = ['month', 'week', 'day'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  const byDate = {};
-  for (const t of S.all) if (t.date) (byDate[t.date] ||= []).push(t);
+function cursor() {
+  if (!calCursor) {
+    const [y, m, d] = S.today.split('-').map(Number);
+    calCursor = new Date(y, m - 1, d);
+  }
+  return calCursor;
+}
+function calMove(days) {
+  const c = cursor();
+  calCursor = new Date(c.getFullYear(), c.getMonth(), c.getDate() + days);
+  renderCalendar();
+}
+function calMoveMonth(n) {
+  const c = cursor();
+  const last = new Date(c.getFullYear(), c.getMonth() + n + 1, 0).getDate();
+  calCursor = new Date(c.getFullYear(), c.getMonth() + n, Math.min(c.getDate(), last));
+  renderCalendar();
+}
+function calJump(dir) { // shift+←/→ and the ‹ › buttons: one period per press
+  if (calMode === 'month') calMoveMonth(dir);
+  else calMove(calMode === 'week' ? dir * 7 : dir);
+}
+
+function calDayCell(d, { month, eventLimit }) {
+  const key = iso(d);
+  const cell = el('div', 'cal-day');
+  if (month != null && d.getMonth() !== month) cell.classList.add('out');
+  if (key === S.today) cell.classList.add('today');
+  if (key === iso(cursor())) cell.classList.add('cursor');
+  cell.onclick = () => { calCursor = d; renderCalendar(); };
+  cell.ondblclick = () => { calCursor = d; calMode = 'day'; renderCalendar(); };
+  cell.append(el('div', 'n', String(d.getDate())));
+  const tasks = calByDate()[key] || [];
+  for (const t of tasks.slice(0, eventLimit)) {
+    const row = el('div', `cal-task${t.done ? ' done' : ''}`, `• ${t.title}`);
+    row.title = `${t.title} (${t.project})`;
+    cell.append(row);
+  }
+  if (tasks.length > eventLimit) cell.append(el('div', 'cal-task dim', `+${tasks.length - eventLimit} more`));
+  return cell;
+}
+
+let _byDate = null;
+function calByDate() {
+  if (!_byDate) {
+    _byDate = {};
+    for (const t of S.all) if (t.date) (_byDate[t.date] ||= []).push(t);
+  }
+  return _byDate;
+}
+
+function renderCalendar() {
+  _byDate = null;
+  const c = cursor();
+  const weekStart = new Date(c.getFullYear(), c.getMonth(), c.getDate() - c.getDay());
+
+  $('cal-title').textContent =
+    calMode === 'day' ? `${MONTH_NAMES[c.getMonth()]} ${c.getDate()}, ${c.getFullYear()}`
+    : calMode === 'week' ? `Week of ${MONTH_NAMES[weekStart.getMonth()]} ${weekStart.getDate()}, ${weekStart.getFullYear()}`
+    : `${MONTH_NAMES[c.getMonth()]} ${c.getFullYear()}`;
+  for (const b of document.querySelectorAll('.cal-mode')) b.classList.toggle('active', b.dataset.mode === calMode);
 
   const grid = $('cal-grid');
+  grid.className = calMode;
   grid.replaceChildren();
-  for (const d of ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']) {
-    const h = el('div', 'cal-dow', d);
-    h.style.minHeight = '0';
-    grid.append(h);
-  }
-  const first = new Date(y, m - 1, 1);
-  const start = new Date(y, m - 1, 1 - first.getDay());
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    const key = iso(d);
-    const cell = el('div', 'cal-day');
-    if (d.getMonth() !== m - 1) cell.classList.add('out');
-    if (key === S.today) cell.classList.add('today');
-    cell.append(el('div', 'n', String(d.getDate())));
-    for (const t of byDate[key] || []) {
-      const row = el('div', `cal-task${t.done ? ' done' : ''}`, `• ${t.title}`);
-      row.title = `${t.title} (${t.project})`;
-      cell.append(row);
+
+  if (calMode === 'day') {
+    const key = iso(c);
+    const box = el('div', 'day-view');
+    box.append(el('h2', '', `${DOW_NAMES[c.getDay()]}, ${MONTH_NAMES[c.getMonth()]} ${c.getDate()}, ${c.getFullYear()}${key === S.today ? ' (today)' : ''}`));
+    const tasks = calByDate()[key] || [];
+    if (!tasks.length) box.append(el('div', 'dim', 'No tasks due this day.'));
+    for (const t of tasks) {
+      const cls = t.done ? 'done' : !t.done && t.date < S.today ? 'overdue' : '';
+      box.append(el('div', `day-task ${cls}`, `${t.done ? '[x]' : '[ ]'} ${t.title}  (${t.project})`));
     }
-    grid.append(cell);
+    grid.append(box);
+  } else {
+    for (const d of ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']) {
+      const h = el('div', 'cal-dow', d);
+      h.style.minHeight = '0';
+      grid.append(h);
+    }
+    if (calMode === 'week') {
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i);
+        grid.append(calDayCell(d, { eventLimit: 12 }));
+      }
+    } else {
+      const first = new Date(c.getFullYear(), c.getMonth(), 1);
+      const start = new Date(c.getFullYear(), c.getMonth(), 1 - first.getDay());
+      for (let i = 0; i < 42; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        grid.append(calDayCell(d, { month: c.getMonth(), eventLimit: 3 }));
+      }
+    }
   }
+
+  const n = (calByDate()[iso(c)] || []).length;
+  $('cal-foot').textContent =
+    `${iso(c)}${iso(c) === S.today ? ' (today)' : ''} — ${n} task${n === 1 ? '' : 's'}` +
+    '   ·   m/w/d views · tab cycles · enter zooms · ←/→ day · ↑/↓ week · shift+←/→ period · t today · esc back';
 }
-$('cal-prev').onclick = () => { const [y, m] = calMonth.split('-').map(Number); calMonth = iso(new Date(y, m - 2, 1)).slice(0, 7); renderCalendar(); };
-$('cal-next').onclick = () => { const [y, m] = calMonth.split('-').map(Number); calMonth = iso(new Date(y, m, 1)).slice(0, 7); renderCalendar(); };
-$('cal-today').onclick = () => { calMonth = null; renderCalendar(); };
+
+$('cal-prev').onclick = () => calJump(-1);
+$('cal-next').onclick = () => calJump(1);
+$('cal-today').onclick = () => { calCursor = null; renderCalendar(); };
+document.querySelectorAll('.cal-mode').forEach((b) => (b.onclick = () => { calMode = b.dataset.mode; renderCalendar(); }));
+
+document.addEventListener('keydown', (e) => {
+  if (view !== 'calendar' || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const k = e.key;
+  const handled = () => e.preventDefault();
+  if (k === 'm') { calMode = 'month'; handled(); return renderCalendar(); }
+  if (k === 'w') { calMode = 'week'; handled(); return renderCalendar(); }
+  if (k === 'd') { calMode = 'day'; handled(); return renderCalendar(); }
+  if (k === 'Tab' || k === 'v') { calMode = CAL_MODES[(CAL_MODES.indexOf(calMode) + 1) % 3]; handled(); return renderCalendar(); }
+  if (k === 'Enter') { calMode = calMode === 'month' ? 'week' : 'day'; handled(); return renderCalendar(); }
+  if (k === 'ArrowLeft') { handled(); return e.shiftKey ? calJump(-1) : calMove(-1); }
+  if (k === 'ArrowRight') { handled(); return e.shiftKey ? calJump(1) : calMove(1); }
+  if (k === 'ArrowUp') { handled(); return calMove(-7); }
+  if (k === 'ArrowDown') { handled(); return calMove(7); }
+  if (k === 't') { calCursor = null; handled(); return renderCalendar(); }
+  if (k === 'Escape') { handled(); return setView('board'); }
+});
 
 /* archive — grouped year / month / week, newest first, with unarchive */
 async function renderArchive() {

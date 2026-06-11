@@ -49,8 +49,7 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   flex-direction: column;
   gap: 16px;
 }
-.brand { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 10px; }
-#mascot { height: 56px; }
+.brand { font-weight: 700; font-size: 15px; }
 .spark { color: var(--accent); }
 #nav-views { display: flex; flex-direction: column; gap: 2px; }
 .navbtn {
@@ -144,6 +143,18 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 .cal-day.out { opacity: 0.35; }
 .cal-day.today { border-color: var(--accent); }
+.cal-day.cursor { background: var(--bg3); box-shadow: inset 0 0 0 1px var(--accent); }
+#cal-grid.week { grid-auto-rows: 1fr; }
+#cal-grid.day { display: block; }
+.cal-mode.active { color: var(--accent); border-color: var(--accent); }
+#cal-foot { margin-top: 8px; font-size: 12px; }
+.day-view {
+  border: 1px solid var(--accent); border-radius: 8px; background: var(--bg2);
+  padding: 10px 14px; max-width: 560px;
+}
+.day-view h2 { font-size: 14px; color: var(--accent); margin: 0 0 6px; }
+.day-task.done { color: var(--dim); text-decoration: line-through; }
+.day-task.overdue { color: var(--red); }
 .cal-day .n { color: var(--dim); }
 .cal-day.today .n { color: var(--accent); font-weight: 700; }
 .cal-task { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
