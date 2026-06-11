@@ -97,13 +97,16 @@ function render() {
 }
 
 function renderSidebar() {
+  // inbox lives in the nav above, not in the project list
   const projs = $('projects');
-  projs.replaceChildren(...S.projects.map((p) => {
+  projs.replaceChildren(...S.projects.filter((p) => p.name !== 'inbox').map((p) => {
     const row = el('div', `proj${p.name === project ? ' active' : ''}`);
     row.append(el('span', '', p.name), el('span', 'count', String(p.count)));
     row.onclick = () => { project = p.name; tagFilter = null; setView('board'); refresh(); };
     return row;
   }));
+  if (projs.childElementCount === 0) projs.replaceChildren(el('div', 'dim', 'none yet — + or /project'));
+  $('nav-views').querySelector('[data-view=board]').classList.toggle('active', view === 'board' && project === 'inbox');
 
   const tags = $('tags');
   tags.replaceChildren(...S.tags.map(({ tag, count }) => {
@@ -388,7 +391,8 @@ $('prompt').addEventListener('input', () => {
 /* ── views ─────────────────────────────────────────────────────────── */
 function setView(v) {
   view = v;
-  for (const b of document.querySelectorAll('.navbtn')) b.classList.toggle('active', b.dataset.view === v);
+  for (const b of document.querySelectorAll('.navbtn'))
+    b.classList.toggle('active', b.dataset.view === v && (v !== 'board' || project === 'inbox'));
   for (const s of document.querySelectorAll('.view')) s.classList.add('hidden');
   $(`view-${v}`).classList.remove('hidden');
   if (v === 'archive') renderArchive();
@@ -398,7 +402,14 @@ function setView(v) {
   else document.activeElement?.blur(); // so calendar keys aren't eaten by a focused button
 }
 
-document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => setView(b.dataset.view)));
+document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => {
+  if (b.dataset.view === 'board') { // the inbox entry: always the inbox list
+    project = 'inbox';
+    tagFilter = null;
+    setView('board');
+    refresh();
+  } else setView(b.dataset.view);
+}));
 
 $('new-project').onclick = () => {
   const name = window.prompt('new project name:');
