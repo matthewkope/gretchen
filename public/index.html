@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>✻ Gretchen</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>✻</text></svg>" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand"><span class="spark">✻</span> Gretchen</div>
+      <nav id="nav-views">
+        <button class="navbtn active" data-view="board">tasks</button>
+        <button class="navbtn" data-view="calendar">calendar</button>
+        <button class="navbtn" data-view="archive">archive</button>
+        <button class="navbtn" data-view="time">time</button>
+      </nav>
+      <div class="side-section">
+        <div class="side-head">projects <button id="new-project" title="new project">+</button></div>
+        <div id="projects"></div>
+      </div>
+      <div class="side-section">
+        <div class="side-head">tags</div>
+        <div id="tags"></div>
+      </div>
+      <div id="stats" class="side-section dim"></div>
+    </aside>
+
+    <main id="main">
+      <div id="timerbar" class="hidden"></div>
+
+      <section id="view-board" class="view">
+        <div id="board-head">
+          <h1 id="board-title">inbox</h1>
+          <span id="tag-filter" class="hidden"></span>
+          <span class="spacer"></span>
+          <button id="file-btn" title="file tagged inbox tasks into matching projects">file tagged</button>
+          <button id="archive-done-btn" title="archive all completed tasks">archive done</button>
+          <select id="sort-sel" title="sort by"></select>
+        </div>
+        <div id="tasks"></div>
+        <div id="promptwrap">
+          <div id="suggest" class="hidden"></div>
+          <div id="promptbox">
+            <span class="caret">❯</span>
+            <input id="prompt" autocomplete="off" spellcheck="false"
+              placeholder='add a task — "ship report due friday #work" · / for commands' />
+          </div>
+          <div id="hint" class="dim">enter adds · dates like “due friday” / “@today” become 📅 · # tags · / commands</div>
+        </div>
+      </section>
+
+      <section id="view-calendar" class="view hidden">
+        <div id="cal-head">
+          <button id="cal-prev">‹</button>
+          <h1 id="cal-title"></h1>
+          <button id="cal-next">›</button>
+          <button id="cal-today">today</button>
+        </div>
+        <div id="cal-grid"></div>
+      </section>
+
+      <section id="view-archive" class="view hidden">
+        <h1>archive</h1>
+        <div id="archive-list"></div>
+      </section>
+
+      <section id="view-time" class="view hidden">
+        <h1>time</h1>
+        <div id="time-summary"></div>
+        <table id="time-table"></table>
+        <div class="dim" id="time-path"></div>
+        <div id="time-email">
+          <label>email for Toggl import: <input id="email-input" placeholder="you@example.com" /></label>
+          <button id="email-save">save</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
