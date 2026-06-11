@@ -1,0 +1,15 @@
+{
+  "name": "gretchen-app",
+  "version": "0.1.0",
+  "description": "Gretchen as a UI — the Gretchen CLI todo app in the browser, over the same ~/.gretchen markdown files.",
+  "type": "module",
+  "bin": {
+    "gretchen-app": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
