@@ -20,6 +20,19 @@ node server.js        # ✻ Gretchen — http://localhost:5277
 
 `PORT=8080 node server.js` to pick another port.
 
+### As a Mac app (dock icon)
+
+```sh
+macos/build.sh --install   # builds Gretchen.app and copies it to /Applications
+```
+
+Launch **Gretchen** from Spotlight or /Applications, then right-click its dock
+icon → Options → *Keep in Dock*. The app is a thin native shell: a window
+holding the exact same web UI, with the server started and stopped for you
+(on port 52770, so it never clashes with a dev server). It bundles its own
+copy of the app files, so rebuild after pulling changes. Requires Xcode's
+command line tools (`swiftc`) to build, and node at runtime.
+
 ## What's in the UI
 
 - **Prompt** — type and press enter, same parser as the CLI:

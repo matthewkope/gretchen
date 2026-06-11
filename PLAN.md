@@ -25,7 +25,7 @@ sync, no migration.
 | Express/Fastify      | `node:http`, ~15 routes in one `server.js`         |
 | CSS framework        | one `style.css`, Claude-Code dark palette          |
 | A database           | the markdown files the CLI already uses            |
-| Electron/Tauri       | a localhost server + the browser you have          |
+| Electron/Tauri       | a localhost server + the browser you have; for the dock, a ~200-line Swift WKWebView shell (`macos/`) wrapping the same files |
 | npm dependencies     | **zero** — `npm install` is a no-op                |
 
 No build step: `gretchen-app` runs `node server.js` and opens
