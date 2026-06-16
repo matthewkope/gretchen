@@ -99,6 +99,22 @@ Slash commands from the CLI still work in the prompt: `/cal`,
 `/sort <key>`, `/archive`, `/archived`, `/stats`, `/time`, `/toggl`, `/oura`,
 `/location <city>`.
 
+## Calendars
+
+Two-way with your calendar, both display-only — Gretchen never edits your events:
+
+- **Show Apple Calendar events** in the calendar view (read-only). In **Settings →
+  Calendars**, click *connect* and allow Calendar access when macOS asks, then
+  toggle which calendars appear. Events show with their calendar's colour next to
+  your tasks. macOS only; reading uses a small bundled helper
+  (`macos/calbridge.swift` → `~/.gretchen/bin/calbridge`). The terminal app shows
+  the same events in `/cal` (it needs its own one-time Calendar grant), honouring
+  the same on/off toggles.
+- **Publish your tasks as a calendar.** Subscribe any calendar app to
+  `webcal://localhost:5277/tasks.ics` (Apple Calendar: *File → New Calendar
+  Subscription*). Every dated task becomes an all-day event; edit a task and the
+  subscription updates on its next refresh. The server has to be running.
+
 ## Storage
 
 Identical to the CLI — everything is editable by hand or in Obsidian:
@@ -111,3 +127,5 @@ Identical to the CLI — everything is editable by hand or in Obsidian:
 - `~/.gretchen/toggl-map.json` — project/#tag → Toggl project routing
 - `~/.gretchen/oura-token` — Oura personal access token, if connected
 - `~/.gretchen/location.json` — city + coords for sunrise/sunset
+- `~/.gretchen/calendars.json` — which Apple calendars are hidden from the view
+- `~/.gretchen/bin/calbridge` — the read-only Apple Calendar helper (built)

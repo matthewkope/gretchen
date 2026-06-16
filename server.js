@@ -25,6 +25,8 @@ import {
 import {
   loadLocation, saveLocation, clearLocation, geocode, sunTimes, fmtSunTime,
 } from './lib/sun.js';
+import { tasksToIcs } from './lib/ics.js';
+import { appleCalAvailable, listCalendars, fetchEvents, setCalendarEnabled } from './lib/applecal.js';
 
 const PORT = Number(process.env.PORT || 5277);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -45,6 +47,16 @@ function togglDescription(title) {
       .replace(/\s{2,}/g, ' ')
       .trim() || 'untitled'
   );
+}
+
+// Apple Calendar list, cached. We never run the helper on boot (it would pop
+// the macOS permission prompt unbidden) — `available` just reflects whether the
+// helper binary exists; the calendar list is pulled on user action (the
+// settings card's connect/refresh) and whenever events are fetched.
+let appleCalState = { available: appleCalAvailable(), authorized: false, calendars: [] };
+async function refreshAppleCal() {
+  appleCalState = await listCalendars();
+  return appleCalState;
 }
 
 // last night's Oura summary, fetched once on boot and on demand (never per
@@ -144,6 +156,7 @@ function stateFor(project) {
           }
         : null,
     },
+    appleCal: { ...appleCalState, port: PORT }, // port for the tasks.ics subscribe URL
     today: today(),
   };
 }
@@ -422,6 +435,29 @@ const routes = {
     return { error: `unknown action ${action}` };
   },
 
+  // Apple Calendar: refresh the list (also the first-time permission prompt,
+  // attributed to this app) and toggle individual calendars on/off
+  async 'POST /api/calendars'({ action, id }) {
+    if (action === 'refresh') {
+      await refreshAppleCal();
+      if (appleCalState.available && !appleCalState.authorized)
+        return { error: 'calendar access not granted — allow it in System Settings → Privacy → Calendars', appleCal: appleCalState };
+      return { ok: true, appleCal: appleCalState };
+    }
+    if (action === 'enable' || action === 'disable' || action === 'toggle') {
+      if (!id) return { error: 'missing calendar id' };
+      const on = action === 'enable'
+        ? true
+        : action === 'disable'
+        ? false
+        : !appleCalState.calendars.find((c) => c.id === id)?.enabled; // toggle
+      setCalendarEnabled(id, on);
+      await refreshAppleCal();
+      return { ok: true, appleCal: appleCalState };
+    }
+    return { error: `unknown action ${action}` };
+  },
+
   'GET /api/time-log'() {
     let rows = [];
     try {
@@ -441,6 +477,29 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/api/state')
       return json(200, stateFor(projectOrNull(url.searchParams.get('project'))));
+
+    // live task-export calendar: every dated task (inbox + projects), generated
+    // fresh each request so subscribers see edits on their next refresh
+    if (req.method === 'GET' && (url.pathname === '/tasks.ics' || url.pathname === '/api/tasks.ics')) {
+      const all = [];
+      for (const name of [null, ...listProjects()])
+        for (const t of loadTasks(name)) all.push({ ...t, project: name || 'inbox' });
+      res.writeHead(200, {
+        'content-type': 'text/calendar; charset=utf-8',
+        'cache-control': 'no-cache',
+        'content-disposition': 'inline; filename="gretchen-tasks.ics"',
+      });
+      return res.end(tasksToIcs(all));
+    }
+
+    // read-only Apple Calendar events for the visible range (enabled calendars)
+    if (req.method === 'GET' && url.pathname === '/api/calendar-events') {
+      const start = url.searchParams.get('start');
+      const end = url.searchParams.get('end');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start || '') || !/^\d{4}-\d{2}-\d{2}$/.test(end || ''))
+        return json(400, { error: 'start and end must be YYYY-MM-DD' });
+      return json(200, await fetchEvents(start, end));
+    }
 
     const route = routes[`${req.method} ${url.pathname}`];
     if (route) {

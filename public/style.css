@@ -215,6 +215,11 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .cal-day.today .n { color: var(--accent); font-weight: 700; }
 .cal-task { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-task.done { color: var(--dim); text-decoration: line-through; }
+/* read-only Apple Calendar events: a colour dot + dim title */
+.cal-ext { display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
+.cal-ext-t { overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+.cal-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+.day-view .cal-ext { margin: 2px 0; font-size: 13px; }
 
 /* ── archive / time ──────────────────────────────────── */
 .arch-h1 { color: var(--accent); margin: 14px 0 2px; font-size: 15px; }
@@ -302,6 +307,16 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .set-dot.on { color: var(--green); }
 .set-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
 .set-link:hover { text-decoration: underline; }
+/* calendars settings: per-calendar list + the tasks-feed subsection */
+.cal-list { display: flex; flex-direction: column; gap: 5px; }
+.cal-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.cal-row input[type="checkbox"] { flex: 0 0 auto; min-width: 0; accent-color: var(--accent); }
+.cal-sw { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px; }
+.cal-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-src { font-size: 11px; }
+.set-subsection { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.set-subhead { font-weight: 600; }
+.cal-url { flex: 1; min-width: 160px; font-family: var(--font-ui); }
 
 /* theme toggle */
 .theme-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
@@ -346,11 +361,23 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   padding: 5px; border-radius: 7px; display: inline-flex; line-height: 0;
 }
 .sidebar-toggle:hover { color: var(--fg); background: var(--bg3); border-color: transparent; }
-/* brand toggle: shown when the sidebar is open → left panel drawn filled */
+/* brand toggle: shown when the sidebar is open → left panel drawn empty */
 .brand .sidebar-toggle { margin-left: -2px; }
-.brand .sidebar-toggle .panel-fill { display: block; }
-/* top-bar toggle: the expand affordance, only while collapsed → panel empty */
+.brand .sidebar-toggle .panel-fill { display: none; }
+/* top-bar toggle: the expand affordance, only while collapsed → panel filled */
 #topbar { display: flex; justify-content: flex-start; padding: 8px 14px 0; }
-#topbar .sidebar-toggle .panel-fill { display: none; }
+#topbar .sidebar-toggle .panel-fill { display: block; }
 #app:not(.sidebar-collapsed) #topbar { display: none; }
 #app.sidebar-collapsed #sidebar { display: none; }
+
+/* ── vim-like modes (badge · command line · selection) ─ */
+.mode-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border);
+  color: var(--dim); white-space: nowrap;
+}
+.mode-add { color: var(--accent); border-color: var(--accent); }
+.mode-list { color: var(--green); border-color: var(--green); }
+.mode-revise { color: var(--yellow); border-color: var(--yellow); }
+#cmdline { color: var(--accent); font-size: 13px; margin-bottom: 6px; }
+.task.selected { border-color: var(--accent); background: var(--bg3); }

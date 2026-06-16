@@ -27,6 +27,13 @@ ln -s "$ROOT/public" "$APP/Contents/Resources/app/public"
 echo "· drawing icon"
 python3 make-icon.py "$APP/Contents/Resources/Gretchen.icns"
 
+echo "· compiling calbridge (read-only Apple Calendar helper)"
+swiftc -O calbridge.swift -o "$APP/Contents/Resources/calbridge" -framework EventKit -framework Foundation
+# also install to ~/.gretchen/bin so the browser/dev server and the CLI find it
+mkdir -p "$HOME/.gretchen/bin"
+cp "$APP/Contents/Resources/calbridge" "$HOME/.gretchen/bin/calbridge"
+codesign --force -s - "$HOME/.gretchen/bin/calbridge"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -42,6 +49,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIconFile</key><string>Gretchen</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSCalendarsUsageDescription</key><string>Gretchen shows your calendar events alongside your tasks. It only reads them — never edits.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>Gretchen shows your calendar events alongside your tasks. It only reads them — never edits.</string>
 </dict>
 </plist>
 PLIST

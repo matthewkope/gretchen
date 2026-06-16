@@ -9,6 +9,10 @@ let view = 'board';
 let calCursor = null;    // Date the calendar cursor is on
 let calMode = 'month';   // month | week | day
 let editing = null;      // task index loaded into the prompt
+let mode = 'add';        // vim-like mode: 'add' (:n) · 'list' (:e) · 'revise' (:r)
+let sel = 0;             // selected task in list/revise mode (index into visibleTasks)
+let visibleTasks = [];   // tasks currently rendered on the board
+let cmdPending = false;  // a ':' was pressed; waiting for the n/e/r letter
 let sugSel = 0;          // selected row in the suggestion strip
 let suggestions = [];    // current strip items: { label, detail, apply }
 let dragFrom = null;     // file index of the task being dragged, or null
@@ -34,6 +38,7 @@ const COMMANDS = [
   { cmd: 'toggl', desc: 'connect Toggl Track to push time entries live' },
   { cmd: 'oura', desc: 'connect Oura Ring — sleep, readiness, ideal bedtime' },
   { cmd: 'location', desc: 'set your city for sunrise/sunset', arg: '<city>' },
+  { cmd: 'calendars', desc: 'connect Apple Calendar (read-only) & publish your tasks' },
   { cmd: 'exit', desc: 'this is a website — just close the tab :)' },
 ];
 
@@ -168,8 +173,18 @@ function renderBoard() {
 
   const list = $('tasks');
   const visible = S.tasks.filter((t) => !tagFilter || t.tags.includes(tagFilter));
-  list.replaceChildren(...visible.map(renderTask));
-  if (!visible.length) list.replaceChildren(el('div', 'dim', 'no tasks — type below to add one'));
+  visibleTasks = visible;
+  if (!visible.length) {
+    list.replaceChildren(el('div', 'dim', 'no tasks — type below to add one'));
+    return updateModeUI();
+  }
+  if (sel >= visible.length) sel = visible.length - 1;
+  if (sel < 0) sel = 0;
+  const rows = visible.map(renderTask);
+  if (mode !== 'add' && rows[sel]) rows[sel].classList.add('selected');
+  list.replaceChildren(...rows);
+  if (mode !== 'add' && rows[sel]) rows[sel].scrollIntoView({ block: 'nearest' });
+  updateModeUI();
 }
 
 function renderTask(t) {
@@ -439,6 +454,7 @@ async function runCommand(raw) {
     return op('move', last.i, arg);
   }
   if (['toggl'].includes(c)) { setView('time'); render(); return $('toggl-token')?.focus(); }
+  if (['calendars', 'cals'].includes(c)) return go('settings');
   if (['oura', 'sleep', 'ring'].includes(c)) {
     if (arg === 'off') return ouraAction({ action: 'disconnect' }, 'Oura disconnected');
     if (S.oura?.connected) return ouraAction({ action: 'refresh' }, 'sleep refreshed');
@@ -458,7 +474,8 @@ $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowUp' && suggestions.length) { e.preventDefault(); sugSel = (sugSel - 1 + suggestions.length) % suggestions.length; return updateSuggestions(); }
   if (e.key === 'ArrowDown' && suggestions.length) { e.preventDefault(); sugSel = (sugSel + 1) % suggestions.length; return updateSuggestions(); }
   if (e.key === 'Tab' && suggestions.length) { e.preventDefault(); return suggestions[sugSel].apply(); }
-  if (e.key === 'Escape') return endEdit();
+  if (e.key === 'Escape') { e.preventDefault(); return enterMode('list'); }
+  if (e.key === ':' && p.value === '' && editing == null && !suggestions.length) { e.preventDefault(); return startCmd(); }
   // enter on a date (or a real priority) populates it and moves to the next
   // prompt instead of submitting; enter on "none"/no suggestion submits
   if (e.key === 'Enter' && suggestions[sugSel]?.enterInserts) { e.preventDefault(); return suggestions[sugSel].apply(); }
@@ -472,11 +489,16 @@ $('prompt').addEventListener('keydown', (e) => {
     updateSuggestions();
     return runCommand(v);
   }
-  const submit = editing != null
+  const wasEdit = editing != null;
+  const revising = wasEdit && mode === 'revise';
+  const submit = wasEdit
     ? api('/api/op', { op: 'edit', index: editing, project, arg: v })
     : api('/api/input', { text: v, project });
   endEdit();
-  submit.then(refresh);
+  submit.then(() => {
+    if (revising) { mode = 'list'; $('prompt').blur(); }
+    refresh();
+  });
 });
 
 $('prompt').addEventListener('input', () => {
@@ -594,13 +616,23 @@ function calDayCell(d, { month, eventLimit }) {
   cell.onclick = () => { calCursor = d; renderCalendar(); };
   cell.ondblclick = () => { calCursor = d; calMode = 'day'; renderCalendar(); };
   cell.append(el('div', 'n', String(d.getDate())));
+
+  // tasks first, then read-only Apple events; one shared "+N more" overflow
   const tasks = calByDate()[key] || [];
-  for (const t of tasks.slice(0, eventLimit)) {
-    const row = el('div', `cal-task${t.done ? ' done' : ''}`, `• ${t.title}`);
-    row.title = `${t.title} (${t.project})`;
-    cell.append(row);
+  const evs = extByDate()[key] || [];
+  let shown = 0, hidden = 0;
+  for (const t of tasks) {
+    if (shown < eventLimit) {
+      const row = el('div', `cal-task${t.done ? ' done' : ''}`, `• ${t.title}`);
+      row.title = `${t.title} (${t.project})`;
+      cell.append(row);
+      shown++;
+    } else hidden++;
   }
-  if (tasks.length > eventLimit) cell.append(el('div', 'cal-task dim', `+${tasks.length - eventLimit} more`));
+  for (const e of evs) {
+    if (shown < eventLimit) { cell.append(calExtRow(e, false)); shown++; } else hidden++;
+  }
+  if (hidden > 0) cell.append(el('div', 'cal-task dim', `+${hidden} more`));
   return cell;
 }
 
@@ -613,8 +645,62 @@ function calByDate() {
   return _byDate;
 }
 
+// ── read-only Apple Calendar events ────────────────────────────────────
+// Fetched per visible range and cached; granting access or moving the view
+// (a new range) refetches. extByDateCache survives task-only re-renders.
+let calRangeKey = null;
+let extByDateCache = {};
+function extByDate() { return extByDateCache; }
+
+function calVisibleRange() {
+  const c = cursor();
+  const mk = (dt, add) => iso(new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + add));
+  if (calMode === 'day') return [iso(c), mk(c, 1)];
+  if (calMode === 'week') {
+    const ws = new Date(c.getFullYear(), c.getMonth(), c.getDate() - c.getDay());
+    return [iso(ws), mk(ws, 7)];
+  }
+  const first = new Date(c.getFullYear(), c.getMonth(), 1);
+  const start = new Date(c.getFullYear(), c.getMonth(), 1 - first.getDay());
+  return [iso(start), mk(start, 42)];
+}
+
+async function ensureCalEvents(startISO, endISO) {
+  const authed = !!(S.appleCal && S.appleCal.authorized);
+  const key = `${authed}|${startISO}|${endISO}`;
+  if (key === calRangeKey) return; // already loaded (or loading) this range
+  calRangeKey = key;
+  if (!authed) { extByDateCache = {}; return; }
+  const out = await api(`/api/calendar-events?start=${startISO}&end=${endISO}`);
+  const byDate = {};
+  for (const e of out.events || []) (byDate[e.date] ||= []).push(e);
+  extByDateCache = byDate;
+  if (view === 'calendar') renderCalendar(); // repaint now that events are in
+}
+
+function fmtEventTime(isoStr) {
+  const m = (isoStr || '').match(/T(\d{2}):(\d{2})/);
+  if (!m) return '';
+  let h = Number(m[1]);
+  const ap = h < 12 ? 'a' : 'p';
+  h = h % 12 || 12;
+  return m[2] === '00' ? `${h}${ap}` : `${h}:${m[2]}${ap}`;
+}
+
+function calExtRow(e, withTime) {
+  const row = el('div', 'cal-ext');
+  const dot = el('span', 'cal-dot');
+  dot.style.background = e.colorHex || 'var(--dim)';
+  const label = (!e.allDay && withTime ? `${fmtEventTime(e.start)} ` : '') + e.title;
+  row.append(dot, el('span', 'cal-ext-t', label));
+  row.title = `${e.title}${e.location ? ` @ ${e.location}` : ''} — ${e.calTitle}`;
+  return row;
+}
+
 function renderCalendar() {
   _byDate = null;
+  const [rangeStart, rangeEnd] = calVisibleRange();
+  ensureCalEvents(rangeStart, rangeEnd); // async; repaints when events arrive
   const c = cursor();
   const weekStart = new Date(c.getFullYear(), c.getMonth(), c.getDate() - c.getDay());
 
@@ -633,11 +719,13 @@ function renderCalendar() {
     const box = el('div', 'day-view');
     box.append(el('h2', '', `${DOW_NAMES[c.getDay()]}, ${MONTH_NAMES[c.getMonth()]} ${c.getDate()}, ${c.getFullYear()}${key === S.today ? ' (today)' : ''}`));
     const tasks = calByDate()[key] || [];
-    if (!tasks.length) box.append(el('div', 'dim', 'No tasks due this day.'));
+    const evs = extByDate()[key] || [];
+    if (!tasks.length && !evs.length) box.append(el('div', 'dim', 'Nothing on this day.'));
     for (const t of tasks) {
       const cls = t.done ? 'done' : !t.done && t.date < S.today ? 'overdue' : '';
       box.append(el('div', `day-task ${cls}`, `${t.done ? '[x]' : '[ ]'} ${t.title}  (${t.project})`));
     }
+    for (const e of evs) box.append(calExtRow(e, true));
     grid.append(box);
   } else {
     for (const d of ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']) {
@@ -1020,7 +1108,22 @@ function setTagColor(tag, hex) {
 }
 
 const KEY_HELP = [
-  { group: 'Tasks (inbox)', rows: [
+  { group: 'Command mode (press “:” on an empty bar, then a letter)', rows: [
+    { keys: [':n'], desc: 'add mode — type a new task' },
+    { keys: [':e'], desc: 'list mode — browse & act on tasks' },
+    { keys: [':r'], desc: 'revise the selected task in the bar' },
+  ] },
+  { group: 'List mode (:e)', rows: [
+    { keys: ['j', 'k'], desc: 'select down / up (or ↓ / ↑)' },
+    { keys: ['⇧↓', '⇧↑'], desc: 'move the task, with its sub-tasks' },
+    { keys: ['⌘→', '⌘←'], desc: 'nest / un-nest (also Tab / ⇧Tab)' },
+    { keys: ['Enter', 'Space'], desc: 'toggle done' },
+    { keys: ['r'], desc: 'revise the selected task' },
+    { keys: ['i', 'a', 'n'], desc: 'switch to add mode' },
+    { keys: ['x', '⌫'], desc: 'archive the task' },
+    { keys: [':'], desc: 'start a command (n / e / r)' },
+  ] },
+  { group: 'Add mode (:n)', rows: [
     { keys: ['Enter'], desc: 'add the typed task, or save an edit' },
     { keys: ['↑', '↓'], desc: 'move through the suggestion menu' },
     { keys: ['Tab'], desc: 'insert the highlighted suggestion' },
@@ -1096,7 +1199,8 @@ function renderSettings() {
   // ── tag colours ──
   body.append(settingsSection('Tag colours', renderTagColorSettings()));
 
-  // ── Oura, location ──
+  // ── calendars, Oura, location ──
+  body.append(settingsSection('Calendars', renderCalendarSettings()));
   body.append(settingsSection('Oura Ring', renderOuraSettings()));
   body.append(settingsSection('Sunrise & sunset', renderLocationSettings()));
 
@@ -1242,6 +1346,83 @@ function renderLocationSettings() {
   return card;
 }
 
+// Apple Calendar (read-only) + the tasks subscription feed
+function renderCalendarSettings() {
+  const card = el('div', 'set-card');
+  const ac = S.appleCal || { available: false, authorized: false, calendars: [] };
+
+  const connected = ac.available && ac.authorized;
+  const status = el('div', 'set-status');
+  status.append(el('span', 'set-dot' + (connected ? ' on' : ''), connected ? '●' : '○'));
+  status.append(el('span', '', !ac.available
+    ? 'Apple Calendar — not available here'
+    : connected ? 'Apple Calendar — connected (read-only)' : 'Apple Calendar — not connected'));
+  card.append(status);
+
+  if (!ac.available) {
+    card.append(el('div', 'dim', 'Reading your calendar needs the Mac app (or the built helper). Run macos/build.sh once, then reopen — events show here, never edited.'));
+  } else if (!connected) {
+    card.append(el('div', 'dim', 'Show your Apple Calendar events in the calendar view — read-only, never edited. Click connect, then allow Calendar access when macOS asks.'));
+    const row = el('div', 'set-row');
+    const connect = el('button', '', 'connect');
+    connect.onclick = () => calendarAction({ action: 'refresh' }, 'calendar connected');
+    row.append(connect);
+    card.append(row);
+  } else {
+    card.append(el('div', 'dim', 'Toggle which calendars appear in the calendar view.'));
+    const list = el('div', 'cal-list');
+    for (const c of ac.calendars) {
+      const r = el('label', 'cal-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = c.enabled;
+      cb.onchange = () => calendarAction({ action: 'toggle', id: c.id }, `${c.title} ${cb.checked ? 'shown' : 'hidden'}`);
+      const sw = el('span', 'cal-sw');
+      sw.style.background = c.colorHex || 'var(--dim)';
+      r.append(cb, sw, el('span', 'cal-name', c.title));
+      if (c.source) r.append(el('span', 'dim cal-src', c.source));
+      list.append(r);
+    }
+    if (!ac.calendars.length) list.append(el('div', 'dim', 'no calendars found'));
+    card.append(list);
+    const row = el('div', 'set-row');
+    const refreshBtn = el('button', '', '↻ refresh');
+    refreshBtn.onclick = () => calendarAction({ action: 'refresh' }, 'calendars refreshed');
+    row.append(refreshBtn);
+    card.append(row);
+  }
+
+  // tasks → calendar feed (always available; the server serves it live)
+  const port = ac.port || location.port || 5277;
+  const url = `webcal://localhost:${port}/tasks.ics`;
+  const sub = el('div', 'set-subsection');
+  sub.append(el('div', 'set-subhead', 'Publish your tasks'));
+  sub.append(el('div', 'dim', 'Subscribe in Apple Calendar (File → New Calendar Subscription) to see every dated task on your calendar. It updates as you edit — Calendar re-checks every few minutes, and the server has to be running.'));
+  const urlRow = el('div', 'set-row');
+  const field = el('input');
+  field.className = 'cal-url';
+  field.value = url;
+  field.readOnly = true;
+  field.onclick = () => field.select();
+  const copy = el('button', '', 'copy');
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(url); toast('subscription URL copied'); }
+    catch { field.select(); toast('select + ⌘C to copy'); }
+  };
+  const open = el('a', 'set-link', 'open in Calendar ↗');
+  open.href = url;
+  urlRow.append(field, copy, open);
+  sub.append(urlRow);
+  card.append(sub);
+
+  return card;
+}
+
+async function calendarAction(body, okMsg) {
+  const out = await api('/api/calendars', body);
+  if (out.ok) { toast(okMsg); refresh(); }
+}
+
 refresh().then(() => $('prompt').focus());
 
 /* ── collapsible sidebar ───────────────────────────────────────────── */
@@ -1252,3 +1433,100 @@ function setSidebarCollapsed(collapsed) {
 for (const b of document.querySelectorAll('.sidebar-toggle'))
   b.onclick = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
 try { if (localStorage.getItem('gretchen-sidebar-collapsed') === '1') setSidebarCollapsed(true); } catch {}
+
+/* ── vim-like modes: :n add · :e list · :r revise ──────────────────────
+   ADD keeps the cursor in the add-a-task bar. LIST blurs it so ↑/↓ walk the
+   list and tab/⇧tab nest a task as a sub-task. REVISE loads the selected
+   task's text back into the bar to rewrite it. Press ':' (in list mode, or
+   on an empty bar) then n/e/r; Escape always drops to LIST. */
+function updateModeUI() {
+  const badge = $('mode-badge');
+  if (badge) {
+    badge.textContent = mode === 'add' ? 'ADD :n' : mode === 'list' ? 'LIST :e' : 'REVISE :r';
+    badge.className = `mode-badge mode-${mode}`;
+  }
+  const hint = $('hint');
+  if (hint && view === 'board') {
+    hint.textContent =
+      mode === 'list'
+        ? '↑/↓ select · ⇧↑/↓ move · ⌘←/→ sub-task · enter done · :n add · :r revise'
+        : mode === 'revise'
+        ? 'revising the task — enter saves · esc cancels'
+        : 'enter adds · “:” then e for list mode · “due friday”/“@today” → 📅 · # tags · / commands';
+  }
+}
+
+function enterMode(m) {
+  if (m === 'revise') {
+    const t = visibleTasks[sel];
+    if (!t) { toast('no task selected — :e then ↑/↓ to pick one'); return enterMode('list'); }
+    mode = 'revise';
+    beginEdit(t); // loads the task text into the bar and focuses it
+    return updateModeUI();
+  }
+  if (m === 'add') {
+    mode = 'add';
+    if (editing != null) endEdit();
+    $('prompt').focus();
+    return updateModeUI();
+  }
+  // list
+  mode = 'list';
+  if (editing != null) endEdit();
+  $('prompt').blur();
+  if (view === 'board' && S) renderBoard();
+  updateModeUI();
+}
+
+function startCmd() {
+  cmdPending = true;
+  const cl = $('cmdline');
+  if (cl) { cl.textContent = ':  n → add · e → list · r → revise'; cl.classList.remove('hidden'); }
+}
+function endCmd() {
+  cmdPending = false;
+  const cl = $('cmdline');
+  if (cl) cl.classList.add('hidden');
+}
+
+// capture the letter after ':' before any focused field can swallow it
+document.addEventListener('keydown', (e) => {
+  if (!cmdPending) return;
+  e.preventDefault();
+  e.stopPropagation();
+  endCmd();
+  const k = e.key.toLowerCase();
+  if (k === 'n') enterMode('add');
+  else if (k === 'e') enterMode('list');
+  else if (k === 'r') enterMode('revise');
+  // Escape or anything else cancels
+}, true);
+
+// LIST-mode keys — only on the board, and only when not typing in a field
+document.addEventListener('keydown', (e) => {
+  if (view !== 'board' || cmdPending) return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const k = e.key;
+  const cur = () => visibleTasks[sel];
+
+  // shift + ↑/↓ : move the selected item (with its sub-tasks) up or down the list
+  if (k === 'ArrowUp' && e.shiftKey) { e.preventDefault(); const t = cur(); if (t) { sel = Math.max(0, sel - 1); op('up', t.i); } return; }
+  if (k === 'ArrowDown' && e.shiftKey) { e.preventDefault(); const t = cur(); if (t) { sel = Math.min(visibleTasks.length - 1, sel + 1); op('down', t.i); } return; }
+  // ⌘/ctrl + → / ← : nest the item into a sub-list (indent) or un-nest it (outdent)
+  if (k === 'ArrowRight' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const t = cur(); if (t) op('indent', t.i); return; }
+  if (k === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const t = cur(); if (t) op('outdent', t.i); return; }
+
+  if (k === ':') { e.preventDefault(); return startCmd(); }
+  if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); sel = Math.min(visibleTasks.length - 1, sel + 1); return renderBoard(); }
+  if (k === 'ArrowUp' || k === 'k') { e.preventDefault(); sel = Math.max(0, sel - 1); return renderBoard(); }
+  if (k === 'Tab') { e.preventDefault(); const t = cur(); if (t) op(e.shiftKey ? 'outdent' : 'indent', t.i); return; }
+  if (k === 'Enter' || k === ' ') { e.preventDefault(); const t = cur(); if (t) op('toggle', t.i); return; }
+  if (k === 'r') { e.preventDefault(); return enterMode('revise'); }
+  if (k === 'i' || k === 'n' || k === 'a') { e.preventDefault(); return enterMode('add'); }
+  if (k === 'x' || k === 'Backspace') { e.preventDefault(); const t = cur(); if (t) op('archive', t.i); return; }
+});
+
+// focusing the add bar is ADD mode (so clicking it leaves LIST)
+$('prompt').addEventListener('focus', () => {
+  if (mode === 'list') { mode = 'add'; updateModeUI(); if (view === 'board' && S) renderBoard(); }
+});
