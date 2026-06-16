@@ -18,6 +18,13 @@ import {
   togglToken, verifyToken, saveToken, clearToken, startEntry, stopEntry,
   loadMap, saveMap, mapKey, togglProjectByName, TOKEN_URL,
 } from './lib/toggl.js';
+import {
+  ouraToken, verifyOuraToken, saveOuraToken, clearOuraToken,
+  fetchSleepSummary, fmtSleepDuration, fmtClockOffset, OURA_TOKEN_URL,
+} from './lib/oura.js';
+import {
+  loadLocation, saveLocation, clearLocation, geocode, sunTimes, fmtSunTime,
+} from './lib/sun.js';
 
 const PORT = Number(process.env.PORT || 5277);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -38,6 +45,22 @@ function togglDescription(title) {
       .replace(/\s{2,}/g, ' ')
       .trim() || 'untitled'
   );
+}
+
+// last night's Oura summary, fetched once on boot and on demand (never per
+// request — the scores sync a few times a day, not per keystroke)
+let ouraData = null;
+async function refreshOura() {
+  if (!ouraToken()) {
+    ouraData = null;
+    return null;
+  }
+  try {
+    ouraData = await fetchSleepSummary();
+    return ouraData;
+  } catch (e) {
+    return { error: e.message };
+  }
 }
 
 // [start, end) of the block (task + its sub-tasks) that contains index i
@@ -92,6 +115,34 @@ function stateFor(project) {
       env: !!process.env.TOGGL_API_TOKEN, // token from $TOGGL_API_TOKEN can't be removed from the UI
       tokenUrl: TOKEN_URL,
       map: loadMap(),
+    },
+    sun: (() => {
+      const loc = loadLocation();
+      if (!loc) return { located: false };
+      const t = sunTimes(loc.lat, loc.lon);
+      return {
+        located: true,
+        name: loc.name,
+        place: loc.name.split(',')[0],
+        sunrise: t ? fmtSunTime(t.sunrise, loc.tz) : null,
+        sunset: t ? fmtSunTime(t.sunset, loc.tz) : null,
+      };
+    })(),
+    oura: {
+      connected: !!ouraToken(),
+      env: !!process.env.OURA_API_TOKEN,
+      tokenUrl: OURA_TOKEN_URL,
+      data: ouraData
+        ? {
+            day: ouraData.day,
+            score: ouraData.score,
+            readiness: ouraData.readiness,
+            duration: ouraData.duration != null ? fmtSleepDuration(ouraData.duration) : null,
+            bedtime: ouraData.bedtime
+              ? `${fmtClockOffset(ouraData.bedtime.start_offset)}\u2013${fmtClockOffset(ouraData.bedtime.end_offset)}`
+              : null,
+          }
+        : null,
     },
     today: today(),
   };
@@ -300,6 +351,66 @@ const routes = {
     return { error: `unknown action ${action}` };
   },
 
+  // connect/disconnect Oura and refresh last night's sleep (the CLI's /oura)
+  async 'POST /api/oura'({ action, token }) {
+    if (action === 'connect') {
+      if (process.env.OURA_API_TOKEN) {
+        try {
+          const me = await verifyOuraToken(process.env.OURA_API_TOKEN.trim());
+          await refreshOura();
+          return { ok: true, name: me.email || 'connected', env: true };
+        } catch (e) {
+          return { error: `$OURA_API_TOKEN rejected (${e.message})` };
+        }
+      }
+      const tok = (token || '').trim();
+      if (!tok) return { error: 'paste your Oura personal access token first' };
+      try {
+        const me = await verifyOuraToken(tok);
+        saveOuraToken(tok);
+        await refreshOura();
+        return { ok: true, name: me.email || 'connected' };
+      } catch (e) {
+        return { error: `token rejected (${e.message}) — check cloud.ouraring.com` };
+      }
+    }
+    if (action === 'disconnect') {
+      if (process.env.OURA_API_TOKEN)
+        return { error: 'token comes from $OURA_API_TOKEN — unset it to disconnect' };
+      clearOuraToken();
+      ouraData = null;
+      return { ok: true };
+    }
+    if (action === 'refresh') {
+      if (!ouraToken()) return { error: 'connect Oura first' };
+      const r = await refreshOura();
+      if (r && r.error) return { error: r.error };
+      return { ok: true };
+    }
+    return { error: `unknown action ${action}` };
+  },
+
+  // set or clear the location for sunrise/sunset (the CLI's /location)
+  async 'POST /api/location'({ action, city }) {
+    if (action === 'clear') {
+      clearLocation();
+      return { ok: true };
+    }
+    if (action === 'set') {
+      const q = (city || '').trim();
+      if (!q) return { error: 'type a city name' };
+      try {
+        const loc = await geocode(q);
+        if (!loc) return { error: `no place found for "${q}" — try a city name` };
+        saveLocation(loc);
+        return { ok: true, name: loc.name };
+      } catch (e) {
+        return { error: `lookup failed (${e.message}) — are you online?` };
+      }
+    }
+    return { error: `unknown action ${action}` };
+  },
+
   'GET /api/time-log'() {
     let rows = [];
     try {
@@ -344,6 +455,8 @@ const server = http.createServer(async (req, res) => {
     json(500, { error: e.message });
   }
 });
+
+refreshOura(); // warm last night's sleep summary so the first /api/state has it
 
 server.listen(PORT, () => {
   console.log(`✻ Gretchen — http://localhost:${PORT}`);

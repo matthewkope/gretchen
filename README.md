@@ -8,7 +8,8 @@ same data — add a task here, see it in `gre`, and vice versa.
 
 Zero dependencies, no build step: a small `node:http` server, three static
 files, and the CLI's own data layer (`lib/store.js`, `lib/timer.js`,
-`lib/toggl.js`). See [PLAN.md](PLAN.md) for how it stays minimal.
+`lib/toggl.js`, `lib/oura.js`, `lib/sun.js`). See [PLAN.md](PLAN.md) for how it
+stays minimal.
 
 ## Run
 
@@ -19,6 +20,21 @@ node server.js        # ✻ Gretchen — http://localhost:5277
 ```
 
 `PORT=8080 node server.js` to pick another port.
+
+### Always-on local server
+
+To keep the web app permanently available at http://localhost:5277 — running
+in the background, started at login, restarted if it ever crashes:
+
+```sh
+macos/install-server.sh              # install + start (PORT=8080 to override)
+macos/install-server.sh --uninstall  # stop and remove it
+```
+
+This installs a launchd LaunchAgent
+(`~/Library/LaunchAgents/com.matthewkope.gretchen-web.plist`); logs go to
+`~/.gretchen/server.log`. It's independent of the Mac app (which uses its own
+port, 52770), so you can run either or both.
 
 ### As a Mac app (dock icon)
 
@@ -65,10 +81,18 @@ command line tools (`swiftc`) to build, and node at runtime.
   the panel. The local CSV is still written either way; disconnect removes the
   token. This is the same `lib/toggl.js` the CLI uses, over the shared
   `~/.gretchen/toggl-token`, so connecting in either app connects both.
+- **Sleep & sun (sidebar “today”)** — the sidebar shows last night's Oura sleep
+  and your sunrise/sunset, mirroring the CLI's inbox header. Connect Oura by
+  pasting a personal access token (cloud.ouraring.com) — it shows the sleep
+  score, readiness, time slept, and tonight's ideal-bedtime window, refreshed
+  on launch (hover for ↻ refresh / × disconnect). Set a city for sunrise/sunset
+  (geocoded via Open-Meteo, no key; hover for ✎ change / × clear). Both read
+  the same `~/.gretchen` files the CLI uses, so setup carries across.
 
 Slash commands from the CLI still work in the prompt: `/cal`,
 `/project <name>`, `/inbox`, `/move <name>`, `/file`, `/tag <name>`, `/all`,
-`/sort <key>`, `/archive`, `/archived`, `/stats`, `/time`, `/toggl`.
+`/sort <key>`, `/archive`, `/archived`, `/stats`, `/time`, `/toggl`, `/oura`,
+`/location <city>`.
 
 ## Storage
 
@@ -80,3 +104,5 @@ Identical to the CLI — everything is editable by hand or in Obsidian:
 - `~/.gretchen/time.csv` — time entries, Toggl-import-ready
 - `~/.gretchen/toggl-token` — Toggl API token, if connected (live sync)
 - `~/.gretchen/toggl-map.json` — project/#tag → Toggl project routing
+- `~/.gretchen/oura-token` — Oura personal access token, if connected
+- `~/.gretchen/location.json` — city + coords for sunrise/sunset

@@ -31,6 +31,8 @@ const COMMANDS = [
   { cmd: 'stats', desc: 'task counts at a glance' },
   { cmd: 'time', desc: 'time log summary' },
   { cmd: 'toggl', desc: 'connect Toggl Track to push time entries live' },
+  { cmd: 'oura', desc: 'connect Oura Ring — sleep, readiness, ideal bedtime' },
+  { cmd: 'location', desc: 'set your city for sunrise/sunset', arg: '<city>' },
   { cmd: 'exit', desc: 'this is a website — just close the tab :)' },
 ];
 
@@ -121,6 +123,8 @@ function renderSidebar() {
     return row;
   }));
   if (!S.tags.length) tags.replaceChildren(el('div', 'dim', 'no tags yet'));
+
+  renderWellness();
 
   const st = S.stats;
   $('stats').textContent =
@@ -362,6 +366,16 @@ async function runCommand(raw) {
     return op('move', last.i, arg);
   }
   if (['toggl'].includes(c)) { setView('time'); render(); return $('toggl-token')?.focus(); }
+  if (['oura', 'sleep', 'ring'].includes(c)) {
+    if (arg === 'off') return ouraAction({ action: 'disconnect' }, 'Oura disconnected');
+    if (S.oura?.connected) return ouraAction({ action: 'refresh' }, 'sleep refreshed');
+    return openOuraConnect($('wellness'), S.oura);
+  }
+  if (['location', 'loc', 'sun'].includes(c)) {
+    if (arg === 'clear') return locationAction({ action: 'clear' }, 'location cleared');
+    if (arg) return setLocation(arg);
+    return inlineField($('wellness'), { placeholder: 'city name', onSubmit: setLocation });
+  }
   if (['exit', 'quit', 'q'].includes(c)) return toast('this is a website — just close the tab :)');
   toast(`unknown command /${cmd}`);
 }
@@ -612,6 +626,125 @@ async function renderArchive() {
 }
 
 /* time — summary, the CSV (newest first), Toggl import email */
+// sidebar wellness block: sunrise/sunset (from /location) and last night's
+// Oura sleep. Display always visible; setup happens inline, no popups (so it
+// works in the Mac app's WKWebView, where window.prompt is a no-op).
+function inlineField(host, { placeholder, type, onSubmit }) {
+  const row = el('div', 'well-input');
+  const input = el('input');
+  if (type) input.type = type;
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { const v = input.value.trim(); if (v) onSubmit(v); }
+    else if (e.key === 'Escape') renderSidebar();
+  };
+  row.append(input);
+  host.append(row);
+  input.focus();
+}
+
+function renderWellness() {
+  const box = $('wellness');
+  if (!box) return;
+  box.replaceChildren();
+  box.append(el('div', 'side-head', 'today'));
+  const sun = S.sun || { located: false };
+  const oura = S.oura || { connected: false };
+
+  // ── sunrise / sunset ──
+  const sunRow = el('div', 'well-row');
+  if (sun.located && sun.sunrise) {
+    sunRow.append(el('span', 'well-main', `☀ ${sun.sunrise}  →  ☾ ${sun.sunset}`));
+    const tools = el('span', 'well-tools');
+    tools.append(mkWellTool('✎', 'change city', () => inlineField(box, { placeholder: 'city name', onSubmit: setLocation })));
+    tools.append(mkWellTool('×', 'clear location', () => locationAction({ action: 'clear' }, 'location cleared')));
+    sunRow.append(tools);
+    sunRow.append(el('div', 'well-sub dim', sun.place));
+  } else if (sun.located) {
+    sunRow.append(el('span', 'dim', 'polar day/night — no sunrise today'));
+  } else {
+    const add = el('button', 'well-add', '+ set location for sunrise/sunset');
+    add.onclick = () => inlineField(box, { placeholder: 'city name, e.g. Falls Church', onSubmit: setLocation });
+    sunRow.append(add);
+  }
+  box.append(sunRow);
+
+  // ── Oura sleep ──
+  const sleepRow = el('div', 'well-row');
+  if (!oura.connected) {
+    const add = el('button', 'well-add', '+ connect Oura sleep');
+    add.onclick = () => openOuraConnect(box, oura);
+    sleepRow.append(add);
+  } else if (oura.data) {
+    const d = oura.data;
+    const head = el('div', 'well-main');
+    head.append(el('span', 'sleep-score', `😴 ${d.score ?? '–'}`));
+    head.append(el('span', 'ready-score', `  ⚡ ${d.readiness ?? '–'}`));
+    const tools = el('span', 'well-tools');
+    tools.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
+    if (!oura.env) tools.append(mkWellTool('×', 'disconnect Oura', () => ouraAction({ action: 'disconnect' }, 'Oura disconnected')));
+    head.append(tools);
+    sleepRow.append(head);
+    if (d.duration) sleepRow.append(el('div', 'well-sub dim', `${d.duration} slept`));
+    if (d.bedtime) {
+      const bed = el('div', 'well-sub');
+      bed.append(el('span', 'bedtime', `🛏 bed by ${d.bedtime}`));
+      sleepRow.append(bed);
+    }
+    if (d.day) sleepRow.append(el('div', 'well-sub dim', d.day));
+  } else {
+    sleepRow.append(el('span', 'dim', 'sleep — syncing… '));
+    sleepRow.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
+  }
+  box.append(sleepRow);
+}
+
+function mkWellTool(label, tip, fn) {
+  const b = el('button', 'well-tool', label);
+  b.title = tip;
+  b.onclick = fn;
+  return b;
+}
+
+function openOuraConnect(box, oura) {
+  const wrap = el('div', 'well-input');
+  const input = el('input');
+  input.type = 'password';
+  input.placeholder = 'paste Oura token';
+  input.autocomplete = 'off';
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') connectOura(input.value);
+    else if (e.key === 'Escape') renderSidebar();
+  };
+  const link = el('a', 'toggl-link', 'get token ↗');
+  link.href = (oura && oura.tokenUrl) || 'https://cloud.ouraring.com/personal-access-tokens';
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  wrap.append(input, link);
+  box.append(wrap);
+  input.focus();
+}
+
+async function connectOura(token) {
+  const out = await api('/api/oura', { action: 'connect', token });
+  if (out.ok) { toast(`Oura connected${out.name ? ` as ${out.name}` : ''}`); refresh(); }
+}
+async function ouraAction(body, okMsg) {
+  const out = await api('/api/oura', body);
+  if (out.ok) { toast(okMsg); refresh(); }
+}
+async function setLocation(city) {
+  const out = await api('/api/location', { action: 'set', city });
+  if (out.ok) { toast(`location set: ${out.name}`); refresh(); }
+}
+async function locationAction(body, okMsg) {
+  const out = await api('/api/location', body);
+  if (out.ok) { toast(okMsg); refresh(); }
+}
+
 function renderToggl() {
   const box = $('toggl-box');
   if (!box) return;

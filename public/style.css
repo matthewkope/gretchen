@@ -207,3 +207,26 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .toggl-map .mx:hover { color: var(--red); border-color: var(--border); }
 .toggl-box button:disabled { opacity: 0.5; cursor: default; }
 .toggl-box button:disabled:hover { border-color: var(--border); color: inherit; }
+
+/* ── sidebar wellness: sun + Oura sleep ──────────────── */
+#wellness { display: flex; flex-direction: column; gap: 8px; }
+.well-row { display: flex; flex-direction: column; gap: 2px; }
+.well-main { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.well-sub { font-size: 12px; }
+.well-main .sleep-score { color: var(--accent); }
+.well-main .ready-score { color: var(--green); }
+.bedtime { color: var(--yellow); font-size: 12px; }
+.well-add {
+  background: none; border: 1px dashed var(--border); color: var(--dim);
+  text-align: left; font-size: 12px; padding: 3px 8px; border-radius: 5px;
+}
+.well-add:hover { border-color: var(--accent); color: var(--accent); }
+.well-tools { display: inline-flex; gap: 2px; margin-left: 4px; opacity: 0; transition: opacity 0.1s; }
+.well-row:hover .well-tools { opacity: 1; }
+.well-tool {
+  padding: 0 5px; font-size: 12px; background: none; border-color: transparent;
+  color: var(--dim);
+}
+.well-tool:hover { border-color: var(--border); color: var(--accent); }
+.well-input { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.well-input input { flex: 1; min-width: 0; font-size: 12px; padding: 2px 6px; }
