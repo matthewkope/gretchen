@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         webView = WKWebView(frame: frame, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.uiDelegate = self // so window.alert/confirm/prompt show native panels
-        webView.underPageBackgroundColor = NSColor(red: 0.10, green: 0.098, blue: 0.082, alpha: 1)
+        webView.underPageBackgroundColor = NSColor(red: 0.980, green: 0.976, blue: 0.957, alpha: 1) // --bg, light theme
         window.contentView = webView
 
         window.makeKeyAndOrderFront(nil)
@@ -52,7 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 } else {
                     self.webView.loadHTMLString(
-                        "<body style='background:#1a1915;color:#e8e6e3;font-family:monospace;padding:2em'>" +
+                        "<body style='background:#faf9f4;color:#2b2820;font-family:monospace;padding:2em'>" +
                         "Gretchen's server didn't start. Is node installed?</body>", baseURL: nil)
                 }
             }

@@ -11,6 +11,7 @@ let calMode = 'month';   // month | week | day
 let editing = null;      // task index loaded into the prompt
 let sugSel = 0;          // selected row in the suggestion strip
 let suggestions = [];    // current strip items: { label, detail, apply }
+let dragFrom = null;     // file index of the task being dragged, or null
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DATE_CTX = /(@|\bdue:?\s+)([\w-]*)$/i;
@@ -97,6 +98,7 @@ function render() {
   if (view === 'board') renderBoard();
   if (view === 'calendar') renderCalendar();
   if (view === 'time') renderTime();
+  if (view === 'settings') renderSettings();
 }
 
 function renderSidebar() {
@@ -118,7 +120,10 @@ function renderSidebar() {
   const tags = $('tags');
   tags.replaceChildren(...S.tags.map(({ tag, count }) => {
     const row = el('div', `tagrow${tag === tagFilter ? ' active' : ''}`);
-    row.append(el('span', '', tag), el('span', 'count', String(count)));
+    const name = el('span', '', tag);
+    const c = tagColor(tag);
+    if (c) name.style.color = c; // custom colour; otherwise the CSS default
+    row.append(name, el('span', 'count', String(count)));
     row.onclick = () => { tagFilter = tagFilter === tag ? null : tag; setView('board'); render(); };
     return row;
   }));
@@ -153,6 +158,7 @@ function renderBoard() {
   const tf = $('tag-filter');
   tf.classList.toggle('hidden', !tagFilter);
   tf.textContent = tagFilter ? `${tagFilter} — click the tag again to clear` : '';
+  tf.style.color = (tagFilter && tagColor(tagFilter)) || ''; // '' falls back to the CSS default
 
   const sort = $('sort-sel');
   if (!sort.options.length) {
@@ -168,7 +174,7 @@ function renderBoard() {
 
 function renderTask(t) {
   const row = el('div', `task${t.done ? ' done' : ''}`);
-  row.style.paddingLeft = `${8 + (t.indent || 0) * 26}px`;
+  if (t.indent) row.style.marginLeft = `${t.indent * 24}px`;
 
   const cb = el('input');
   cb.type = 'checkbox';
@@ -180,6 +186,8 @@ function renderTask(t) {
   for (const part of t.title.split(/(#[\w/-]+)/g)) {
     if (part.startsWith('#')) {
       const a = el('span', 'tag', part);
+      const c = tagColor(part);
+      if (c) a.style.color = c; // custom colour; otherwise the CSS default yellow
       a.onclick = () => { tagFilter = tagFilter === part ? null : part; render(); };
       title.append(a);
     } else title.append(part);
@@ -200,10 +208,6 @@ function renderTask(t) {
     return b;
   };
   tools.append(
-    mk('↑', 'move up', () => op('up', t.i)),
-    mk('↓', 'move down', () => op('down', t.i)),
-    mk('⇥', 'nest under the task above', () => op('indent', t.i)),
-    mk('⇤', 'un-nest', () => op('outdent', t.i)),
     mk('✎', 'edit in the prompt', () => beginEdit(t)),
     mk('⌫', 'archive (with sub-tasks)', () => op('archive', t.i)),
     mk('✕', 'delete (with sub-tasks)', () => op('delete', t.i)),
@@ -219,7 +223,74 @@ function renderTask(t) {
   const d = dateSpan(t);
   if (d) row.append(d);
   row.append(tools);
+
+  // drag-and-drop reordering. A task moves with its sub-tasks (its "block"),
+  // mirroring the ↑/↓ buttons. Disabled while a tag filter hides rows, since
+  // the visible order wouldn't match the file order we reorder against.
+  if (!tagFilter) {
+    row.draggable = true;
+    row.dataset.i = t.i;
+    row.addEventListener('dragstart', (e) => {
+      dragFrom = t.i;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(t.i)); // Firefox needs a payload
+    });
+    row.addEventListener('dragend', () => { dragFrom = null; clearDropMarkers(); });
+    // a drop only fires when both dragenter and dragover cancel the default
+    const allow = (e) => { if (dragFrom != null) e.preventDefault(); };
+    row.addEventListener('dragenter', allow);
+    row.addEventListener('dragover', (e) => {
+      if (dragFrom == null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = row.getBoundingClientRect();
+      const after = e.clientY - rect.top > rect.height / 2;
+      clearDropMarkers();
+      row.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // handled here; don't let the list-area drop also fire
+      if (dragFrom == null) return;
+      const rect = row.getBoundingClientRect();
+      const after = e.clientY - rect.top > rect.height / 2;
+      const from = dragFrom;
+      dragFrom = null;
+      clearDropMarkers();
+      op('reorder', from, dropTargetIndex(S.tasks, t.i, after));
+    });
+  }
   return row;
+}
+
+// block boundaries as file indices — each top-level task starts a block that
+// includes the more-indented tasks below it
+function blockStarts(tasks) {
+  const starts = [];
+  for (let i = 0; i < tasks.length; ) {
+    starts.push(i);
+    let j = i + 1;
+    while (j < tasks.length && (tasks[j].indent || 0) > (tasks[i].indent || 0)) j++;
+    i = j;
+  }
+  return starts;
+}
+
+// where a drop on `hoverIndex` lands: the hovered block's start (above) or the
+// next block's start (below), or the list end
+function dropTargetIndex(tasks, hoverIndex, after) {
+  const starts = blockStarts(tasks);
+  let bStart = 0;
+  for (const s of starts) { if (s <= hoverIndex) bStart = s; else break; }
+  if (!after) return bStart;
+  const next = starts.find((s) => s > bStart);
+  return next == null ? tasks.length : next;
+}
+
+function clearDropMarkers() {
+  document.querySelectorAll('.task.drop-before, .task.drop-after')
+    .forEach((r) => r.classList.remove('drop-before', 'drop-after'));
 }
 
 async function op(name, index, arg) {
@@ -275,6 +346,7 @@ function updateSuggestions() {
     const p = $('prompt');
     p.value = p.value.replace(replaceRe, '') + text;
     p.focus();
+    sugSel = 0; // fresh context (e.g. the priority list after a date) starts at the top
     updateSuggestions();
   };
 
@@ -311,12 +383,13 @@ function updateSuggestions() {
         label: `${p.emoji || '·'} ${p.key}`,
         detail: p.key === 'none' ? 'no priority (default)' : 'Obsidian Tasks priority',
         apply: insert(/([a-z]*)$/i, p.emoji ? `${p.emoji} ` : ''),
+        enterInserts: !!p.emoji, // enter sets a real priority; enter on "none" submits the task
       }));
   } else if (DATE_CTX.test(v)) {
     const partial = v.match(DATE_CTX)[2].toLowerCase();
     suggestions = S.dates
       .filter((d) => d.label.startsWith(partial) || d.date.startsWith(partial))
-      .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: insert(DATE_CTX, `📅 ${d.date} `) }));
+      .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: insert(DATE_CTX, `📅 ${d.date} `), enterInserts: true }));
   }
 
   sugSel = Math.min(sugSel, Math.max(0, suggestions.length - 1));
@@ -386,6 +459,9 @@ $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown' && suggestions.length) { e.preventDefault(); sugSel = (sugSel + 1) % suggestions.length; return updateSuggestions(); }
   if (e.key === 'Tab' && suggestions.length) { e.preventDefault(); return suggestions[sugSel].apply(); }
   if (e.key === 'Escape') return endEdit();
+  // enter on a date (or a real priority) populates it and moves to the next
+  // prompt instead of submitting; enter on "none"/no suggestion submits
+  if (e.key === 'Enter' && suggestions[sugSel]?.enterInserts) { e.preventDefault(); return suggestions[sugSel].apply(); }
   if (e.key !== 'Enter') return;
   e.preventDefault();
 
@@ -421,6 +497,7 @@ function setView(v) {
   if (v === 'archive') renderArchive();
   if (v === 'calendar') renderCalendar();
   if (v === 'time') renderTime();
+  if (v === 'settings') renderSettings();
   if (v === 'board') $('prompt').focus();
   else document.activeElement?.blur(); // so calendar keys aren't eaten by a focused button
 }
@@ -461,6 +538,18 @@ function newProjectPrompt() {
   }
   row.querySelector('input').focus();
 }
+// dropping in the empty space below the task rows sends the task to the bottom
+// (row drops call stopPropagation, so this only runs for the gap)
+$('tasks').addEventListener('dragover', (e) => { if (dragFrom != null) e.preventDefault(); });
+$('tasks').addEventListener('drop', (e) => {
+  if (dragFrom == null) return;
+  e.preventDefault();
+  const from = dragFrom;
+  dragFrom = null;
+  clearDropMarkers();
+  op('reorder', from, S.tasks.length); // arg past the end → append
+});
+
 $('new-project').onclick = newProjectPrompt;
 $('file-btn').onclick = () => runCommand('/file');
 $('archive-done-btn').onclick = () => runCommand('/archive');
@@ -859,4 +948,307 @@ $('email-save').onclick = async () => {
   refresh();
 };
 
+/* ── settings: theme, Oura, location, keyboard + slash commands ─────── */
+// theme is a UI preference kept in localStorage (per the existing pattern);
+// the no-flash class is applied by a head script before first paint.
+function currentTheme() {
+  return document.documentElement.classList.contains('theme-light') ? 'light' : 'dark';
+}
+function applyTheme(theme) {
+  document.documentElement.classList.toggle('theme-light', theme === 'light');
+  try { localStorage.setItem('gretchen-theme', theme); } catch {}
+  if (view === 'settings') renderSettings(); // reflect the active button
+}
+
+// font and checkbox shape are UI prefs like the theme — a class on <html>
+// (applied before paint by the head script) plus localStorage. The defaults,
+// terminal font and circle checkboxes, carry no class.
+function currentFont() {
+  return document.documentElement.classList.contains('font-minimal') ? 'minimal' : 'terminal';
+}
+function applyFont(font) {
+  document.documentElement.classList.toggle('font-minimal', font === 'minimal');
+  try { localStorage.setItem('gretchen-font', font); } catch {}
+  if (view === 'settings') renderSettings();
+}
+function currentCheckbox() {
+  return document.documentElement.classList.contains('checkbox-square') ? 'square' : 'circle';
+}
+function applyCheckbox(style) {
+  document.documentElement.classList.toggle('checkbox-square', style === 'square');
+  try { localStorage.setItem('gretchen-checkbox', style); } catch {}
+  if (view === 'settings') renderSettings();
+}
+
+// a segmented control of two-or-more options (theme, font, checkbox shape)
+function segToggle(options, current, onPick) {
+  const t = el('div', 'theme-toggle');
+  for (const o of options) {
+    const b = el('button', current === o.value ? 'active' : '', o.label);
+    b.onclick = () => onPick(o.value);
+    t.append(b);
+  }
+  return t;
+}
+
+// Tag colours are a UI preference like the theme: kept in localStorage, keyed
+// by tag (e.g. "#work" → "#7cb87c"). A tag with no entry keeps the default
+// yellow. Choosable colours read well on both the light and dark themes.
+const TAG_PALETTE = [
+  { name: 'red', hex: '#d4766c' },
+  { name: 'orange', hex: '#e0935a' },
+  { name: 'green', hex: '#7cb87c' },
+  { name: 'teal', hex: '#4db6ac' },
+  { name: 'blue', hex: '#6c9ed4' },
+  { name: 'indigo', hex: '#8186d4' },
+  { name: 'purple', hex: '#b48ead' },
+  { name: 'pink', hex: '#d782ba' },
+];
+
+function loadTagColors() {
+  try { return JSON.parse(localStorage.getItem('gretchen-tag-colors')) || {}; }
+  catch { return {}; }
+}
+let tagColors = loadTagColors();
+function tagColor(tag) {
+  return tagColors[tag] || null; // null = default (the CSS yellow)
+}
+function setTagColor(tag, hex) {
+  if (hex) tagColors[tag] = hex; else delete tagColors[tag];
+  try { localStorage.setItem('gretchen-tag-colors', JSON.stringify(tagColors)); } catch {}
+  render(); // recolour tags everywhere and refresh the settings swatches
+}
+
+const KEY_HELP = [
+  { group: 'Tasks (inbox)', rows: [
+    { keys: ['Enter'], desc: 'add the typed task, or save an edit' },
+    { keys: ['↑', '↓'], desc: 'move through the suggestion menu' },
+    { keys: ['Tab'], desc: 'insert the highlighted suggestion' },
+    { keys: ['Esc'], desc: 'cancel an edit / clear the prompt' },
+    { keys: ['drag'], desc: 'reorder a task and its sub-tasks' },
+  ] },
+  { group: 'Calendar', rows: [
+    { keys: ['m', 'w', 'd'], desc: 'month / week / day view' },
+    { keys: ['Tab', 'v'], desc: 'cycle through the views' },
+    { keys: ['Enter'], desc: 'zoom in (month → week → day)' },
+    { keys: ['←', '→'], desc: 'previous / next day' },
+    { keys: ['↑', '↓'], desc: 'previous / next week' },
+    { keys: ['⇧←', '⇧→'], desc: 'previous / next period' },
+    { keys: ['t'], desc: 'jump to today' },
+    { keys: ['Esc'], desc: 'back to the inbox' },
+  ] },
+  { group: 'Mac app', rows: [
+    { keys: ['⌘R'], desc: 'reload (picks up web app edits)' },
+    { keys: ['⌘W'], desc: 'close the window' },
+    { keys: ['⌘Q'], desc: 'quit' },
+  ] },
+];
+
+function settingsSection(title, contentEl) {
+  const s = el('div', 'set-section');
+  s.append(el('h2', '', title), contentEl);
+  return s;
+}
+
+function renderSettings() {
+  const body = $('settings-body');
+  if (!body || !S) return;
+  body.replaceChildren();
+
+  // ── appearance / theme ──
+  const themeCard = el('div', 'set-card');
+  const themeRow = el('div', 'set-row');
+  themeRow.append(el('span', '', 'Theme'));
+  const toggle = el('div', 'theme-toggle');
+  for (const t of ['dark', 'light']) {
+    const b = el('button', currentTheme() === t ? 'active' : '', t);
+    b.onclick = () => applyTheme(t);
+    toggle.append(b);
+  }
+  themeRow.append(toggle);
+  themeCard.append(themeRow);
+  body.append(settingsSection('Appearance', themeCard));
+
+  // ── fonts ──
+  const fontCard = el('div', 'set-card');
+  const fontRow = el('div', 'set-row');
+  fontRow.append(el('span', '', 'Font'));
+  fontRow.append(segToggle(
+    [{ value: 'terminal', label: 'terminal' }, { value: 'minimal', label: 'minimal' }],
+    currentFont(), applyFont,
+  ));
+  fontCard.append(fontRow);
+  fontCard.append(el('div', 'dim', 'Terminal is the monospace default. Minimal is the clean sans-serif from Obsidian’s Minimal theme.'));
+  body.append(settingsSection('Fonts', fontCard));
+
+  // ── checkbox style ──
+  const cbCard = el('div', 'set-card');
+  const cbRow = el('div', 'set-row');
+  cbRow.append(el('span', '', 'Checkboxes'));
+  cbRow.append(segToggle(
+    [{ value: 'circle', label: 'circles' }, { value: 'square', label: 'squares' }],
+    currentCheckbox(), applyCheckbox,
+  ));
+  cbCard.append(cbRow);
+  cbCard.append(el('div', 'dim', 'Round checkboxes (default) or the classic squares used before.'));
+  body.append(settingsSection('Checkboxes', cbCard));
+
+  // ── tag colours ──
+  body.append(settingsSection('Tag colours', renderTagColorSettings()));
+
+  // ── Oura, location ──
+  body.append(settingsSection('Oura Ring', renderOuraSettings()));
+  body.append(settingsSection('Sunrise & sunset', renderLocationSettings()));
+
+  // ── keyboard shortcuts ──
+  const keysCard = el('div', 'set-card');
+  for (const g of KEY_HELP) {
+    keysCard.append(el('div', 'side-head', g.group));
+    const grp = el('div', 'kbd-group');
+    for (const r of g.rows) {
+      const row = el('div', 'kbd-row');
+      const keys = el('span', 'kbd-keys');
+      r.keys.forEach((k, i) => {
+        if (i) keys.append(el('span', 'kbd-sep', '/'));
+        keys.append(el('span', 'kbd', k));
+      });
+      row.append(keys, el('span', 'kbd-desc', r.desc));
+      grp.append(row);
+    }
+    keysCard.append(grp);
+  }
+  body.append(settingsSection('Keyboard shortcuts', keysCard));
+
+  // ── slash commands (reuse the prompt's command list) ──
+  const cmdCard = el('div', 'set-card');
+  const cmdGrp = el('div', 'kbd-group');
+  for (const c of COMMANDS) {
+    const row = el('div', 'kbd-row');
+    row.append(
+      el('span', 'cmd-name', `/${c.cmd}${c.arg ? ` ${c.arg}` : ''}`),
+      el('span', 'kbd-desc', c.desc),
+    );
+    cmdGrp.append(row);
+  }
+  cmdCard.append(cmdGrp);
+  body.append(settingsSection('Slash commands (type in the prompt)', cmdCard));
+}
+
+function renderTagColorSettings() {
+  const card = el('div', 'set-card');
+  card.append(el('div', 'dim', 'Give any tag its own colour, or leave it default. Colours apply everywhere a #tag shows — in tasks, the sidebar, and the filter — and are saved in this browser.'));
+  if (!S.tags.length) {
+    card.append(el('div', 'dim', 'No tags yet — add a task with a #tag first.'));
+    return card;
+  }
+  for (const { tag, count } of S.tags) {
+    const row = el('div', 'tagcolor-row');
+    const name = el('span', 'tagcolor-name', tag);
+    const cur = tagColor(tag);
+    name.style.color = cur || 'var(--yellow)'; // preview in the chosen (or default) colour
+    row.append(name, el('span', 'count', String(count)));
+
+    const swatches = el('div', 'swatches');
+    const def = el('button', `swatch swatch-default${cur ? '' : ' sel'}`);
+    def.title = 'default';
+    def.onclick = () => setTagColor(tag, null);
+    swatches.append(def);
+    for (const p of TAG_PALETTE) {
+      const sw = el('button', `swatch${cur === p.hex ? ' sel' : ''}`);
+      sw.style.background = p.hex;
+      sw.title = p.name;
+      sw.onclick = () => setTagColor(tag, p.hex);
+      swatches.append(sw);
+    }
+    row.append(swatches);
+    card.append(row);
+  }
+  return card;
+}
+
+function renderOuraSettings() {
+  const card = el('div', 'set-card');
+  const oura = S.oura || { connected: false };
+  const status = el('div', 'set-status');
+  status.append(el('span', 'set-dot' + (oura.connected ? ' on' : ''), oura.connected ? '●' : '○'));
+  status.append(el('span', '', oura.connected ? 'Connected' : 'Not connected'));
+  card.append(status);
+  card.append(el('div', 'dim', 'Reads last night’s sleep & readiness from the Oura API v2 and shows it in the sidebar. The token stays local in ~/.gretchen/oura-token.'));
+
+  if (!oura.connected) {
+    const row = el('div', 'set-row');
+    const input = el('input');
+    input.type = 'password';
+    input.placeholder = 'paste your Oura personal access token';
+    input.autocomplete = 'off';
+    input.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') connectOura(input.value); };
+    const connect = el('button', '', 'connect');
+    connect.onclick = () => connectOura(input.value);
+    const link = el('a', 'set-link', 'get a token ↗');
+    link.href = oura.tokenUrl || 'https://cloud.ouraring.com/personal-access-tokens';
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    row.append(input, connect, link);
+    card.append(row);
+  } else {
+    if (oura.data) {
+      const d = oura.data;
+      const parts = [];
+      if (d.score != null) parts.push(`😴 sleep ${d.score}`);
+      if (d.readiness != null) parts.push(`⚡ readiness ${d.readiness}`);
+      if (d.duration) parts.push(`${d.duration} slept`);
+      if (parts.length) card.append(el('div', '', parts.join('     ')));
+    }
+    const row = el('div', 'set-row');
+    const refresh = el('button', '', '↻ refresh');
+    refresh.onclick = () => ouraAction({ action: 'refresh' }, 'sleep refreshed');
+    row.append(refresh);
+    const dis = el('button', '', 'disconnect');
+    dis.disabled = !!oura.env;
+    dis.title = oura.env ? 'token comes from $OURA_API_TOKEN — unset it to disconnect' : 'remove the saved token';
+    dis.onclick = () => ouraAction({ action: 'disconnect' }, 'Oura disconnected');
+    row.append(dis);
+    if (oura.env) row.append(el('span', 'dim', 'token from $OURA_API_TOKEN'));
+    card.append(row);
+  }
+  return card;
+}
+
+function renderLocationSettings() {
+  const card = el('div', 'set-card');
+  const sun = S.sun || { located: false };
+  const status = el('div', 'set-status');
+  status.append(el('span', 'set-dot' + (sun.located ? ' on' : ''), sun.located ? '●' : '○'));
+  status.append(el('span', '', sun.located ? (sun.name || 'location set') : 'No location set'));
+  card.append(status);
+  if (sun.located && sun.sunrise) card.append(el('div', '', `☀ sunrise ${sun.sunrise}     ☾ sunset ${sun.sunset}`));
+  card.append(el('div', 'dim', 'Geocoded once via Open-Meteo (no key); times then compute locally. Stored in ~/.gretchen/location.json.'));
+
+  const row = el('div', 'set-row');
+  const input = el('input');
+  input.placeholder = sun.located ? 'change city' : 'city name, e.g. Falls Church';
+  input.autocomplete = 'off';
+  const submit = () => { const v = input.value.trim(); if (v) setLocation(v); };
+  input.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') submit(); };
+  const save = el('button', '', 'set');
+  save.onclick = submit;
+  row.append(input, save);
+  if (sun.located) {
+    const clear = el('button', '', 'clear');
+    clear.onclick = () => locationAction({ action: 'clear' }, 'location cleared');
+    row.append(clear);
+  }
+  card.append(row);
+  return card;
+}
+
 refresh().then(() => $('prompt').focus());
+
+/* ── collapsible sidebar ───────────────────────────────────────────── */
+function setSidebarCollapsed(collapsed) {
+  $('app').classList.toggle('sidebar-collapsed', collapsed);
+  try { localStorage.setItem('gretchen-sidebar-collapsed', collapsed ? '1' : '0'); } catch {}
+}
+for (const b of document.querySelectorAll('.sidebar-toggle'))
+  b.onclick = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
+try { if (localStorage.getItem('gretchen-sidebar-collapsed') === '1') setSidebarCollapsed(true); } catch {}

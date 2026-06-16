@@ -209,6 +209,17 @@ const routes = {
       [blocks[bi], blocks[swap]] = [blocks[swap], blocks[bi]];
       saveTasks(blocks.flat(), p);
       return { ok: true };
+    } else if (op === 'reorder') {
+      // drag-and-drop: move the dragged task's whole block so it lands just
+      // before the task at `arg` (its block start); arg >= length appends.
+      const to = Number(arg);
+      const insertAt = !(to >= 0 && to < tasks.length) ? tasks.length : blockRange(tasks, to)[0];
+      if (insertAt > s && insertAt < e) return { ok: true }; // dropped onto itself
+      const rest = [...tasks.slice(0, s), ...tasks.slice(e)];
+      const at = insertAt >= e ? insertAt - (e - s) : insertAt;
+      rest.splice(at, 0, ...block);
+      saveTasks(rest, p);
+      return { ok: true };
     } else if (op === 'sort') {
       saveTasks(sortTasks(tasks, arg || 'priority'), p);
       return { ok: true };
@@ -446,7 +457,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET') {
       const file = path.join(PUBLIC, url.pathname === '/' ? 'index.html' : url.pathname);
       if (file.startsWith(PUBLIC) && fs.existsSync(file) && fs.statSync(file).isFile()) {
-        res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
+        // no-cache: files are read fresh from disk, so the browser should always
+        // revalidate and never run a stale app.js/style.css after an update
+        res.writeHead(200, {
+          'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+          'cache-control': 'no-cache',
+        });
         return res.end(fs.readFileSync(file));
       }
     }

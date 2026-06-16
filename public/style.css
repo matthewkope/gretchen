@@ -10,6 +10,27 @@
   --yellow: #d4a94f;
   --red: #d4766c;
   --border: #3a362f;
+  --font-ui: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* font: terminal monospace (default) or Obsidian Minimal's sans-serif stack
+   (https://github.com/kepano/obsidian-minimal), set via the Fonts setting */
+:root.font-minimal {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Ubuntu, sans-serif;
+}
+
+/* light mode — warm paper, same coral accent (set via the theme toggle) */
+:root.theme-light {
+  --bg: #faf9f4;
+  --bg2: #f1efe8;
+  --bg3: #e6e2d8;
+  --fg: #2b2820;
+  --dim: #6e695f;
+  --accent: #c15f3a;
+  --green: #4f8a4f;
+  --yellow: #a8801f;
+  --red: #bd463c;
+  --border: #d8d2c4;
 }
 
 * { box-sizing: border-box; }
@@ -18,7 +39,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font: 14px/1.5 var(--font-ui);
 }
 button, input, select {
   font: inherit;
@@ -49,7 +70,7 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   flex-direction: column;
   gap: 16px;
 }
-.brand { font-weight: 700; font-size: 15px; }
+.brand { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
 .spark { color: var(--accent); }
 #nav-views { display: flex; flex-direction: column; gap: 2px; }
 .navbtn {
@@ -88,13 +109,38 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 #timerbar button { margin-left: 12px; }
 
-#tasks { flex: 1; overflow-y: auto; min-height: 0; }
+#tasks { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 2px 2px 6px; }
 .task {
-  display: flex; align-items: center; gap: 8px; padding: 3px 8px;
-  border-radius: 5px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg2);
 }
-.task:hover { background: var(--bg2); }
-.task input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+.task:hover { background: var(--bg3); border-color: #4a4439; }
+/* round, thin-outlined checkbox (Reminders/Things style); fills coral when done */
+.task input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  flex: 0 0 auto; width: 20px; height: 20px; margin: 0;
+  border: 1.6px solid color-mix(in srgb, var(--fg) 28%, transparent);
+  border-radius: 50%; background: none; position: relative;
+  cursor: pointer; transition: border-color .12s ease, background-color .12s ease;
+}
+.task input[type="checkbox"]:hover { border-color: var(--accent); }
+.task input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.task input[type="checkbox"]:checked::after {
+  content: ""; position: absolute; left: 6px; top: 2.5px;
+  width: 4px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+/* square checkbox style (the previous look), via the Checkboxes setting —
+   restore the native control, themed coral */
+:root.checkbox-square .task input[type="checkbox"] {
+  appearance: auto; -webkit-appearance: auto;
+  width: 15px; height: 15px; border: 0; border-radius: 0;
+  background: none; accent-color: var(--accent);
+}
+:root.checkbox-square .task input[type="checkbox"]::after { content: none; }
 .task .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task.done .title { color: var(--dim); text-decoration: line-through; }
 .task .tag { color: var(--yellow); cursor: pointer; }
@@ -110,7 +156,14 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .task .tools button:hover { border-color: var(--border); }
 .task .timer-btn { color: var(--dim); }
 .task .timer-btn.on { color: var(--accent); display: inline-block; }
-.task.tracking { background: var(--bg3); }
+.task.tracking { background: var(--bg3); border-color: var(--accent); }
+
+/* drag-and-drop reordering */
+.task { cursor: grab; }
+.task input, .task button, .task select, .task .tag { cursor: pointer; }
+.task.dragging { opacity: 0.4; cursor: grabbing; }
+.task.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.task.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ── prompt + suggestions ────────────────────────────── */
 #promptwrap { margin-top: 12px; }
@@ -230,3 +283,74 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .well-tool:hover { border-color: var(--border); color: var(--accent); }
 .well-input { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .well-input input { flex: 1; min-width: 0; font-size: 12px; padding: 2px 6px; }
+
+/* ── settings ────────────────────────────────────────── */
+#settings-body { display: flex; flex-direction: column; gap: 22px; max-width: 640px; }
+.set-section { display: flex; flex-direction: column; gap: 8px; }
+.set-section h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--dim); margin: 0; font-weight: 600;
+}
+.set-card {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg2);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.set-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-row input { flex: 1; min-width: 160px; }
+.set-status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.set-dot { color: var(--dim); }
+.set-dot.on { color: var(--green); }
+.set-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.set-link:hover { text-decoration: underline; }
+
+/* theme toggle */
+.theme-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.theme-toggle button {
+  background: none; border: none; border-radius: 0; padding: 5px 14px; color: var(--dim);
+}
+.theme-toggle button.active { background: var(--bg3); color: var(--accent); }
+.theme-toggle button:hover { color: var(--accent); }
+
+/* tag colour pickers */
+.tagcolor-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tagcolor-name { min-width: 90px; font-weight: 600; }
+.tagcolor-row .count { color: var(--dim); min-width: 14px; }
+.swatches { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.swatch {
+  width: 18px; height: 18px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--border); cursor: pointer; background: var(--bg3);
+}
+.swatch:hover { border-color: var(--accent); }
+.swatch.sel { box-shadow: 0 0 0 2px var(--bg2), 0 0 0 3px var(--fg); }
+/* the "default" choice: a neutral chip with a diagonal slash */
+.swatch-default {
+  background-image: linear-gradient(45deg, transparent 45%, var(--dim) 45%, var(--dim) 55%, transparent 55%);
+}
+
+/* keyboard + slash command tables */
+.kbd-group { display: flex; flex-direction: column; gap: 3px; }
+.kbd-row { display: flex; align-items: baseline; gap: 12px; padding: 1px 0; }
+.kbd-keys { flex: 0 0 200px; display: flex; gap: 4px; flex-wrap: wrap; }
+.kbd {
+  font-size: 12px; padding: 1px 7px; border-radius: 4px;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
+  white-space: nowrap;
+}
+.kbd-sep { color: var(--dim); }
+.kbd-desc { color: var(--dim); }
+.cmd-name { flex: 0 0 200px; color: var(--accent); }
+
+/* ── collapsible sidebar ─────────────────────────────── */
+.sidebar-toggle {
+  background: none; border: none; color: var(--dim); cursor: pointer;
+  padding: 5px; border-radius: 7px; display: inline-flex; line-height: 0;
+}
+.sidebar-toggle:hover { color: var(--fg); background: var(--bg3); border-color: transparent; }
+/* brand toggle: shown when the sidebar is open → left panel drawn filled */
+.brand .sidebar-toggle { margin-left: -2px; }
+.brand .sidebar-toggle .panel-fill { display: block; }
+/* top-bar toggle: the expand affordance, only while collapsed → panel empty */
+#topbar { display: flex; justify-content: flex-start; padding: 8px 14px 0; }
+#topbar .sidebar-toggle .panel-fill { display: none; }
+#app:not(.sidebar-collapsed) #topbar { display: none; }
+#app.sidebar-collapsed #sidebar { display: none; }
