@@ -128,6 +128,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
 
+        let viewItem = NSMenuItem()
+        main.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View")
+        // the web app is served live from the repo, so ⌘R picks up edits
+        viewMenu.addItem(withTitle: "Reload", action: #selector(reloadWeb), keyEquivalent: "r")
+        viewItem.submenu = viewMenu
+
         let windowItem = NSMenuItem()
         main.addItem(windowItem)
         let win = NSMenu(title: "Window")
@@ -137,6 +144,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.windowsMenu = win
 
         NSApp.mainMenu = main
+    }
+
+    // ⌘R — re-fetch the page so live edits to public/ show without relaunching
+    @objc func reloadWeb() {
+        webView.reloadFromOrigin()
     }
 }
 

@@ -45,9 +45,14 @@ macos/build.sh --install   # builds Gretchen.app and copies it to /Applications
 Launch **Gretchen** from Spotlight or /Applications, then right-click its dock
 icon → Options → *Keep in Dock*. The app is a thin native shell: a window
 holding the exact same web UI, with the server started and stopped for you
-(on port 52770, so it never clashes with a dev server). It bundles its own
-copy of the app files, so rebuild after pulling changes. Requires Xcode's
-command line tools (`swiftc`) to build, and node at runtime.
+(on port 52770, so it never clashes with a dev server).
+
+The bundle **symlinks** to the repo rather than copying it, so the app always
+runs the live web app — edit `public/` and press **⌘R** to see it, or edit
+`server.js`/`lib/` and relaunch; no rebuild needed. Rebuild only when you
+change the Swift shell (`macos/main.swift`) or move/rename the repo (which
+breaks the links). Requires Xcode's command line tools (`swiftc`) to build,
+and node at runtime.
 
 ## What's in the UI
 

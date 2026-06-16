@@ -1,6 +1,11 @@
 #!/bin/sh
-# Build Gretchen.app — compiles the Swift shell, bundles the web app
-# (server.js + lib + public, unchanged) into Resources/app, draws the icon.
+# Build Gretchen.app — compiles the Swift shell and links the web app
+# (server.js + lib + public) into Resources/app, draws the icon.
+#
+# Resources/app is *symlinked* to the repo (absolute paths), not copied, so the
+# app always runs the live web app: any change to public/, server.js, or lib/
+# shows up on the next launch (or ⌘R) with no rebuild. Rebuild only when you
+# edit the Swift shell — or move/rename the repo, which breaks the links.
 #   macos/build.sh                  → builds macos/Gretchen.app
 #   macos/build.sh --install        → also copies it to /Applications
 set -e
@@ -14,9 +19,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 echo "· compiling shell"
 swiftc -O main.swift -o "$APP/Contents/MacOS/Gretchen" -framework Cocoa -framework WebKit
 
-echo "· bundling web app"
-cp "$ROOT/server.js" "$APP/Contents/Resources/app/"
-cp -R "$ROOT/lib" "$ROOT/public" "$APP/Contents/Resources/app/"
+echo "· linking web app (live from the repo)"
+ln -s "$ROOT/server.js" "$APP/Contents/Resources/app/server.js"
+ln -s "$ROOT/lib" "$APP/Contents/Resources/app/lib"
+ln -s "$ROOT/public" "$APP/Contents/Resources/app/public"
 
 echo "· drawing icon"
 python3 make-icon.py "$APP/Contents/Resources/Gretchen.icns"
