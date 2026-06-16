@@ -7,8 +7,8 @@ UI. Same features, same files: tasks are plain markdown in the
 same data — add a task here, see it in `gre`, and vice versa.
 
 Zero dependencies, no build step: a small `node:http` server, three static
-files, and the CLI's own data layer (`lib/store.js`, `lib/timer.js`).
-See [PLAN.md](PLAN.md) for how it stays minimal.
+files, and the CLI's own data layer (`lib/store.js`, `lib/timer.js`,
+`lib/toggl.js`). See [PLAN.md](PLAN.md) for how it stays minimal.
 
 ## Run
 
@@ -57,10 +57,18 @@ command line tools (`swiftc`) to build, and node at runtime.
   another task logs the first). Sessions append to `~/.gretchen/time.csv` in
   Toggl Track's import format; the time view shows the log and sets the
   import email.
+- **Toggl Track sync** — the time view's Toggl panel connects your account
+  (paste the API token from track.toggl.com/profile). Once connected, ▶
+  entries are *also* pushed to Toggl live — named after the task, filed under
+  the Toggl project matching the current project (or first `#tag`), created if
+  missing. Add routing overrides (`project or #tag → Toggl project`) right in
+  the panel. The local CSV is still written either way; disconnect removes the
+  token. This is the same `lib/toggl.js` the CLI uses, over the shared
+  `~/.gretchen/toggl-token`, so connecting in either app connects both.
 
 Slash commands from the CLI still work in the prompt: `/cal`,
 `/project <name>`, `/inbox`, `/move <name>`, `/file`, `/tag <name>`, `/all`,
-`/sort <key>`, `/archive`, `/archived`, `/stats`, `/time`.
+`/sort <key>`, `/archive`, `/archived`, `/stats`, `/time`, `/toggl`.
 
 ## Storage
 
@@ -70,3 +78,5 @@ Identical to the CLI — everything is editable by hand or in Obsidian:
 - `~/.gretchen/projects/<name>.md` — one file per project
 - `~/.gretchen/archive.md` — archive, grouped by year/month/week
 - `~/.gretchen/time.csv` — time entries, Toggl-import-ready
+- `~/.gretchen/toggl-token` — Toggl API token, if connected (live sync)
+- `~/.gretchen/toggl-map.json` — project/#tag → Toggl project routing

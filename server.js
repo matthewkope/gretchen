@@ -14,13 +14,31 @@ import {
   SORT_KEYS,
 } from './lib/store.js';
 import { logEntry, timeStats, timeCsvPath, getEmail, setEmail, fmtDuration } from './lib/timer.js';
+import {
+  togglToken, verifyToken, saveToken, clearToken, startEntry, stopEntry,
+  loadMap, saveMap, mapKey, togglProjectByName, TOKEN_URL,
+} from './lib/toggl.js';
 
 const PORT = Number(process.env.PORT || 5277);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
 
-// the one running timer, like the CLI's: in memory, logged to time.csv on stop
-let tracking = null; // { title, project, tags, startedAt }
+// the one running timer, like the CLI's: in memory, logged to time.csv on stop.
+// `id` is the live Toggl time-entry id when Toggl is connected (else null).
+let tracking = null; // { title, project, tags, startedAt, id }
+
+// Toggl entry description: the task text only — no #tags, 📅/✅ dates, or
+// priority/other emojis (mirrors the CLI's togglDescription)
+function togglDescription(title) {
+  return (
+    title
+      .replace(/(?:📅|✅)\s*\d{4}-\d{2}-\d{2}/gu, '')
+      .replace(/#[\w][\w/-]*/g, '')
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{2BFF}\u{2000}-\u{206F}\u{FE0F}\u{200D}]/gu, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim() || 'untitled'
+  );
+}
 
 // [start, end) of the block (task + its sub-tasks) that contains index i
 function blockRange(tasks, i) {
@@ -69,16 +87,25 @@ function stateFor(project) {
     tracking: tracking && { ...tracking, elapsed: fmtDuration(Date.now() - tracking.startedAt) },
     time: timeStats(),
     email: getEmail(),
+    toggl: {
+      connected: !!togglToken(),
+      env: !!process.env.TOGGL_API_TOKEN, // token from $TOGGL_API_TOKEN can't be removed from the UI
+      tokenUrl: TOKEN_URL,
+      map: loadMap(),
+    },
     today: today(),
   };
 }
 
-function stopTimer() {
+// stop the running session: append the local CSV row and, if the entry is live
+// on Toggl, stop it there too. Toggl failures never block the local log.
+async function stopTimer() {
   if (!tracking) return null;
   const t = tracking;
   tracking = null;
-  logEntry({ description: t.title.replace(/#[\w/-]+/g, '').replace(/\s{2,}/g, ' ').trim() || t.title,
+  logEntry({ description: togglDescription(t.title),
     project: t.project === 'inbox' ? '' : t.project, tags: t.tags, startedAt: t.startedAt, stoppedAt: Date.now() });
+  if (t.id) await stopEntry(t.id).catch(() => {});
   return t;
 }
 
@@ -190,16 +217,85 @@ const routes = {
     return { ok: true };
   },
 
-  'POST /api/time'({ action, title, project, tags, value }) {
+  async 'POST /api/time'({ action, title, project, tags, value }) {
     if (action === 'email') {
       setEmail(value || '');
       return { ok: true };
     }
-    if (action === 'stop') return { ok: true, stopped: stopTimer() };
+    if (action === 'stop') return { ok: true, stopped: await stopTimer() };
     if (action === 'start') {
-      stopTimer(); // switching tasks logs the old session first, like the CLI
-      tracking = { title, project: project || 'inbox', tags: tags || [], startedAt: Date.now() };
+      await stopTimer(); // switching tasks logs the old session first, like the CLI
+      tracking = { title, project: project || 'inbox', tags: tags || [], startedAt: Date.now(), id: null };
+      // also start a live Toggl entry when connected — named after the task,
+      // filed under the matching Toggl project (or first #tag); see toggl.js
+      if (togglToken()) {
+        try {
+          const { entry, project: proj } = await startEntry({
+            description: togglDescription(title),
+            project: project && project !== 'inbox' ? project : '',
+            tag: tags && tags[0] ? `#${tags[0]}` : null,
+          });
+          tracking.id = entry.id;
+          tracking.startedAt = new Date(entry.start).getTime();
+          return { ok: true, toggl: `→ Toggl project ${proj.name}` };
+        } catch (e) {
+          return { ok: true, toggl: `local only — Toggl start failed: ${e.message}` };
+        }
+      }
       return { ok: true };
+    }
+    return { error: `unknown action ${action}` };
+  },
+
+  // connect/disconnect Toggl and manage project routing (the CLI's /toggl)
+  async 'POST /api/toggl'({ action, token, from, to }) {
+    if (action === 'connect') {
+      if (process.env.TOGGL_API_TOKEN) {
+        try {
+          const me = await verifyToken(process.env.TOGGL_API_TOKEN.trim());
+          return { ok: true, name: me.fullname || me.email, env: true };
+        } catch (e) {
+          return { error: `$TOGGL_API_TOKEN rejected (${e.message})` };
+        }
+      }
+      const tok = (token || '').trim();
+      if (!tok) return { error: 'paste your Toggl API token first' };
+      try {
+        const me = await verifyToken(tok);
+        saveToken(tok);
+        return { ok: true, name: me.fullname || me.email };
+      } catch (e) {
+        return { error: `token rejected (${e.message}) — check track.toggl.com/profile` };
+      }
+    }
+    if (action === 'disconnect') {
+      if (process.env.TOGGL_API_TOKEN)
+        return { error: 'token comes from $TOGGL_API_TOKEN — unset it to disconnect' };
+      clearToken();
+      return { ok: true };
+    }
+    if (action === 'map') {
+      if (!togglToken()) return { error: 'connect Toggl first' };
+      if (!from || !to) return { error: 'usage: map <project-or-#tag> <toggl project>' };
+      try {
+        const p = await togglProjectByName(to);
+        if (!p) return { error: `no Toggl project named "${to}" — create it in Toggl first, or check spelling` };
+        const map = loadMap();
+        map[mapKey(from)] = p.name;
+        saveMap(map);
+        return { ok: true, map, name: p.name };
+      } catch (e) {
+        return { error: `Toggl error: ${e.message}` };
+      }
+    }
+    if (action === 'unmap') {
+      const map = loadMap();
+      const key = mapKey(from || '');
+      if (!key || !(key in map)) return { error: `no mapping for "${from || ''}"` };
+      const was = map[key];
+      delete map[key];
+      saveMap(map);
+      return { ok: true, map, was };
     }
     return { error: `unknown action ${action}` };
   },
@@ -232,7 +328,7 @@ const server = http.createServer(async (req, res) => {
         for await (const c of req) chunks.push(c);
         body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
       }
-      const out = route(body);
+      const out = await route(body);
       return json(out.error ? 400 : 200, out);
     }
 

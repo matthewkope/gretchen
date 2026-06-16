@@ -14,8 +14,8 @@
       <nav id="nav-views">
         <button class="navbtn active" data-view="board"><span class="navicon">📥</span> inbox</button>
         <button class="navbtn" data-view="calendar"><span class="navicon">📅</span> calendar</button>
-        <button class="navbtn" data-view="archive">archive</button>
-        <button class="navbtn" data-view="time">time</button>
+        <button class="navbtn" data-view="archive"><span class="navicon">🗄️</span> archive</button>
+        <button class="navbtn" data-view="time"><span class="navicon">🕐</span> time log</button>
       </nav>
       <div class="side-section">
         <div class="side-head">projects <button id="new-project" title="new project">+</button></div>
@@ -75,7 +75,8 @@
       </section>
 
       <section id="view-time" class="view hidden">
-        <h1>time</h1>
+        <h1>time log</h1>
+        <div id="toggl-box" class="toggl-box"></div>
         <div id="time-summary"></div>
         <table id="time-table"></table>
         <div class="dim" id="time-path"></div>

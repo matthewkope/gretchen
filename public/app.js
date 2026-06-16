@@ -30,6 +30,7 @@ const COMMANDS = [
   { cmd: 'archived', desc: 'view the archive' },
   { cmd: 'stats', desc: 'task counts at a glance' },
   { cmd: 'time', desc: 'time log summary' },
+  { cmd: 'toggl', desc: 'connect Toggl Track to push time entries live' },
   { cmd: 'exit', desc: 'this is a website — just close the tab :)' },
 ];
 
@@ -105,7 +106,11 @@ function renderSidebar() {
     row.onclick = () => { project = p.name; tagFilter = null; setView('board'); refresh(); };
     return row;
   }));
-  if (projs.childElementCount === 0) projs.replaceChildren(el('div', 'dim', 'none yet — + or /project'));
+  if (projs.childElementCount === 0) {
+    const hint = el('div', 'dim proj-empty', 'none yet — click + to add');
+    hint.onclick = newProjectPrompt;
+    projs.replaceChildren(hint);
+  }
   $('nav-views').querySelector('[data-view=board]').classList.toggle('active', view === 'board' && project === 'inbox');
 
   const tags = $('tags');
@@ -179,7 +184,7 @@ function renderTask(t) {
 
   const isTracking = S.tracking && S.tracking.title === t.title;
   if (isTracking) row.classList.add('tracking');
-  const timer = el('button', `timer-btn${isTracking ? ' on' : ''}`, isTracking ? '⏺' : '▶');
+  const timer = el('button', `timer-btn${isTracking ? ' on' : ''}`, isTracking ? '■' : '▶');
   timer.title = isTracking ? 'stop timer' : 'start timer';
   timer.onclick = () => (isTracking ? stopTimer() : startTimer(t));
 
@@ -240,7 +245,10 @@ function startTimer(t) {
     title: t.title,
     project: project === 'inbox' ? '' : project,
     tags: t.tags.map((g) => g.slice(1)),
-  }).then(refresh);
+  }).then((out) => {
+    if (out.toggl) toast(`⏺ tracking — ${out.toggl}`);
+    refresh();
+  });
 }
 function stopTimer() {
   api('/api/time', { action: 'stop' }).then((out) => {
@@ -353,6 +361,7 @@ async function runCommand(raw) {
     if (!last) return toast('no task to move');
     return op('move', last.i, arg);
   }
+  if (['toggl'].includes(c)) { setView('time'); render(); return $('toggl-token')?.focus(); }
   if (['exit', 'quit', 'q'].includes(c)) return toast('this is a website — just close the tab :)');
   toast(`unknown command /${cmd}`);
 }
@@ -411,10 +420,34 @@ document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => {
   } else setView(b.dataset.view);
 }));
 
-$('new-project').onclick = () => {
-  const name = window.prompt('new project name:');
-  if (name) runCommand(`/project ${name}`);
-};
+// Inline new-project input. window.prompt() is a no-op inside the Mac app's
+// WKWebView (no UI delegate), so we add the field to the sidebar directly —
+// this works the same in the browser and the app. A refresh() after creation
+// rebuilds the project list, which removes this temporary row.
+function newProjectPrompt() {
+  const projs = $('projects');
+  let row = projs.querySelector('.proj-new');
+  if (!row) {
+    row = el('div', 'proj-new');
+    const input = el('input');
+    input.placeholder = 'new project name';
+    input.maxLength = 40;
+    input.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        const name = input.value.trim();
+        if (name) runCommand(`/project ${name}`); // refresh() will clear this row
+        else renderSidebar();
+      } else if (e.key === 'Escape') {
+        renderSidebar(); // drop the input
+      }
+    };
+    row.append(input);
+    projs.prepend(row);
+  }
+  row.querySelector('input').focus();
+}
+$('new-project').onclick = newProjectPrompt;
 $('file-btn').onclick = () => runCommand('/file');
 $('archive-done-btn').onclick = () => runCommand('/archive');
 
@@ -579,7 +612,95 @@ async function renderArchive() {
 }
 
 /* time — summary, the CSV (newest first), Toggl import email */
+function renderToggl() {
+  const box = $('toggl-box');
+  if (!box) return;
+  const tg = S.toggl || { connected: false, map: {}, tokenUrl: 'https://track.toggl.com/profile' };
+  box.replaceChildren();
+
+  const head = el('div', 'toggl-head');
+  head.append(el('span', 'toggl-dot' + (tg.connected ? ' on' : ''), tg.connected ? '●' : '○'));
+  head.append(el('span', '', tg.connected ? 'Toggl Track — connected' : 'Toggl Track — not connected'));
+  box.append(head);
+
+  if (!tg.connected) {
+    box.append(el('div', 'dim', 'Push ▶ time entries to Toggl live, named after the task and filed under the matching Toggl project. Entries always log locally to time.csv too.'));
+    const row = el('div', 'toggl-row');
+    const input = el('input');
+    input.id = 'toggl-token';
+    input.type = 'password';
+    input.placeholder = 'paste your Toggl API token';
+    input.autocomplete = 'off';
+    input.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') connectToggl(input.value); };
+    const connect = el('button', '', 'connect');
+    connect.onclick = () => connectToggl(input.value);
+    const getlink = el('a', 'toggl-link', 'get token ↗');
+    getlink.href = tg.tokenUrl;
+    getlink.target = '_blank';
+    getlink.rel = 'noreferrer';
+    row.append(input, connect, getlink);
+    box.append(row);
+    return;
+  }
+
+  // connected: routing map + disconnect
+  const note = el('div', 'dim', 'Routing: a project (or first #tag) goes to the Toggl project of the same name, created if missing. Add an override below.');
+  box.append(note);
+
+  const map = tg.map || {};
+  const keys = Object.keys(map);
+  if (keys.length) {
+    const list = el('div', 'toggl-maps');
+    for (const k of keys) {
+      const m = el('div', 'toggl-map');
+      m.append(el('span', 'mk', k), el('span', 'arrow', '→'), el('span', 'mv', map[k]));
+      const x = el('button', 'mx', '✕');
+      x.title = 'remove this mapping';
+      x.onclick = () => togglAction({ action: 'unmap', from: k }, `unmapped ${k}`);
+      m.append(x);
+      list.append(m);
+    }
+    box.append(list);
+  }
+
+  const addRow = el('div', 'toggl-row');
+  const from = el('input');
+  from.placeholder = 'project or #tag';
+  from.onkeydown = (e) => e.stopPropagation();
+  const to = el('input');
+  to.placeholder = 'Toggl project';
+  to.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') addMapping(from.value, to.value); };
+  const add = el('button', '', 'map');
+  add.onclick = () => addMapping(from.value, to.value);
+  addRow.append(from, el('span', 'dim', '→'), to, add);
+  box.append(addRow);
+
+  const foot = el('div', 'toggl-row');
+  const dis = el('button', '', 'disconnect');
+  dis.disabled = !!tg.env;
+  dis.title = tg.env ? 'token comes from $TOGGL_API_TOKEN — unset it to disconnect' : 'remove the saved token';
+  dis.onclick = () => togglAction({ action: 'disconnect' }, 'Toggl disconnected');
+  foot.append(dis);
+  if (tg.env) foot.append(el('span', 'dim', 'token from $TOGGL_API_TOKEN'));
+  box.append(foot);
+}
+
+async function connectToggl(token) {
+  const out = await api('/api/toggl', { action: 'connect', token });
+  if (out.ok) { toast(`Toggl connected as ${out.name}`); refresh(); }
+}
+async function addMapping(from, to) {
+  if (!from.trim() || !to.trim()) return toast('both a name and a Toggl project are needed');
+  const out = await api('/api/toggl', { action: 'map', from: from.trim(), to: to.trim() });
+  if (out.ok) { toast(`mapped ${from.trim().replace(/^#/, '')} → ${out.name}`); refresh(); }
+}
+async function togglAction(body, okMsg) {
+  const out = await api('/api/toggl', body);
+  if (out.ok) { toast(okMsg); refresh(); }
+}
+
 async function renderTime() {
+  renderToggl();
   const { entries, today, total } = S.time;
   $('time-summary').textContent = `${entries} entr${entries === 1 ? 'y' : 'ies'} · ${today} today · ${total} total`;
   const { header, rows, path } = await api('/api/time-log');
