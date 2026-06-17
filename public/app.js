@@ -20,6 +20,8 @@ let dragEl = null;       // the row element being dragged (for live reordering)
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DATE_CTX = /(@|\bdue:?\s+)([\w-]*)$/i;
+// a trailing "du"/"due" being typed — show the date picker before the space
+const DUE_PREFIX = /\bdue?$/i;
 const PRIO_CTX = /📅 (\d{4}-\d{2}-\d{2}) ([a-z]*)$/iu;
 const HASH_CTX = /#([\w/-]*)$/;
 
@@ -331,6 +333,14 @@ function renderTask(t) {
       op('reorder', from, to);
     });
   }
+
+  // double-click a task to revise its text in the bar
+  row.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.tag, input, button, select')) return;
+    const i = visibleTasks.indexOf(t);
+    if (i >= 0) sel = i;
+    enterMode('revise');
+  });
   return row;
 }
 
@@ -476,11 +486,14 @@ function updateSuggestions() {
         apply: insert(/([a-z]*)$/i, p.emoji ? `${p.emoji} ` : ''),
         enterInserts: !!p.emoji, // enter sets a real priority; enter on "none" submits the task
       }));
-  } else if (DATE_CTX.test(v)) {
-    const partial = v.match(DATE_CTX)[2].toLowerCase();
+  } else if (DATE_CTX.test(v) || DUE_PREFIX.test(v)) {
+    // "@x" / "due x" filter by the partial; a bare "du"/"due" shows them all
+    const m = v.match(DATE_CTX);
+    const partial = m ? m[2].toLowerCase() : '';
+    const replaceRe = m ? DATE_CTX : DUE_PREFIX;
     suggestions = S.dates
       .filter((d) => d.label.startsWith(partial) || d.date.startsWith(partial))
-      .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: insert(DATE_CTX, `📅 ${d.date} `), enterInserts: true }));
+      .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: insert(replaceRe, `📅 ${d.date} `), enterInserts: true }));
   }
 
   sugSel = Math.min(sugSel, Math.max(0, suggestions.length - 1));
@@ -606,6 +619,11 @@ function toggleKanCollapse(name) {
   renderKanban();
 }
 
+// the optional bottom input bar (toggled by the head gear), remembered per browser
+let kanbanTaskbar = (() => { try { return localStorage.getItem('gretchen-kanban-taskbar') === '1'; } catch { return false; } })();
+let kanTaskbarCol = 0;        // which column the bar adds to
+let kanTaskbarRefocus = false; // refocus the bar after a re-render (keep adding)
+
 function kanCardVisible(card) {
   return !tagFilter || (card.tags || []).includes(tagFilter);
 }
@@ -654,6 +672,8 @@ async function renderKanban() {
   };
   addCol.append(addBtn);
   board.append(addCol);
+
+  ensureKanbanChrome(cols); // gear + optional bottom input bar
 }
 
 function kanColumn(col, ci) {
@@ -798,19 +818,144 @@ async function kanMoveColumn(from, to) {
   if (out.ok) refresh();
 }
 
+// ── card inputs: tag/date/priority autocomplete + live date formatting ──
+// A self-contained dropdown attached to any card input. Reuses the board
+// prompt's contexts (HASH_CTX/DATE_CTX/PRIO_CTX), data (S.tags/S.dates/
+// S.priorities) and autoFormatDates ("due friday "→📅). The input must already
+// have a parent node; it's wrapped so the menu can float above it.
+function attachSmartInput(input, { onSubmit, onCancel } = {}) {
+  const wrap = el('span', 'kan-input');
+  input.replaceWith(wrap);
+  wrap.append(input);
+  let items = [];
+  let sel = 0;
+  let menu = null;
+
+  const closeMenu = () => { if (menu) { menu.remove(); menu = null; } items = []; sel = 0; };
+  const insert = (re, text) => { input.value = input.value.replace(re, '') + text; };
+
+  const paint = () => {
+    if (menu) { menu.remove(); menu = null; }
+    if (!items.length) return;
+    menu = el('div', 'kan-suggest');
+    items.forEach((it, i) => {
+      const row = el('div', `sug${i === sel ? ' sel' : ''}`);
+      row.append(el('span', 'lab', it.label), el('span', 'det', it.detail || ''));
+      // mousedown (not click) so picking a row doesn't blur+cancel the input first
+      row.onmousedown = (e) => { e.preventDefault(); it.apply(); compute(); input.focus(); };
+      menu.append(row);
+    });
+    wrap.append(menu);
+  };
+
+  function compute() {
+    const v = input.value;
+    items = [];
+    if (HASH_CTX.test(v)) {
+      const p = v.match(HASH_CTX)[1].toLowerCase();
+      items = (S.tags || []).filter((t) => t.tag.slice(1).toLowerCase().startsWith(p))
+        .map((t) => ({ label: t.tag, detail: `${t.count}`, apply: () => insert(HASH_CTX, `${t.tag} `) }));
+    } else if (PRIO_CTX.test(v)) {
+      const p = v.match(PRIO_CTX)[2].toLowerCase();
+      items = [{ key: 'none', emoji: '' }, ...(S.priorities || [])].filter((x) => x.key.startsWith(p))
+        .map((x) => ({ label: `${x.emoji || '·'} ${x.key}`, detail: x.key === 'none' ? 'no priority' : '',
+          apply: () => insert(/([a-z]*)$/i, x.emoji ? `${x.emoji} ` : '') }));
+    } else if (DATE_CTX.test(v)) {
+      const p = v.match(DATE_CTX)[2].toLowerCase();
+      items = (S.dates || []).filter((d) => d.label.startsWith(p) || d.date.startsWith(p))
+        .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: () => insert(DATE_CTX, `📅 ${d.date} `) }));
+    }
+    sel = Math.min(sel, Math.max(0, items.length - 1));
+    paint();
+  }
+
+  input.addEventListener('input', () => { input.value = autoFormatDates(input.value); compute(); });
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // keep the board's global key handlers out of card inputs
+    if (menu && items.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); sel = (sel + 1) % items.length; return paint(); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); sel = (sel - 1 + items.length) % items.length; return paint(); }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[sel].apply(); return compute(); }
+      if (e.key === 'Escape') { e.preventDefault(); return closeMenu(); }
+    }
+    if (e.key === 'Enter') { e.preventDefault(); const t = input.value.trim(); if (t) onSubmit?.(t); else onCancel?.(); }
+    else if (e.key === 'Escape') { e.preventDefault(); onCancel?.(); }
+  });
+  return input;
+}
+
+// the gear (kanban head) + the optional bottom input bar it toggles
+function ensureKanbanChrome(cols) {
+  const head = $('kanban-head');
+  if (head && !$('kanban-gear-wrap')) {
+    const wrap = el('span', 'kan-gear-wrap');
+    wrap.id = 'kanban-gear-wrap';
+    const gear = el('button', 'kan-gear', '⚙');
+    gear.title = 'kanban settings';
+    gear.onclick = (e) => { e.stopPropagation(); kanGearMenu(wrap); };
+    wrap.append(gear);
+    head.append(wrap);
+  }
+  const section = $('view-kanban');
+  let bar = $('kanban-taskbar');
+  if (!bar && section) {
+    bar = el('div', 'kanban-taskbar hidden');
+    bar.id = 'kanban-taskbar';
+    section.append(bar);
+  }
+  if (!bar) return;
+  bar.classList.toggle('hidden', !kanbanTaskbar);
+  if (kanbanTaskbar) renderKanbanTaskbar(bar, cols);
+  else bar.replaceChildren();
+}
+
+function renderKanbanTaskbar(bar, cols) {
+  if (kanTaskbarCol >= cols.length) kanTaskbarCol = 0;
+  bar.replaceChildren();
+  const box = el('div', 'kanban-taskbar-box');
+  box.append(el('span', 'caret', '❯'));
+  const input = el('input', 'kanban-taskbar-input');
+  input.placeholder = 'add a card — #tag, “due friday”, priority…';
+  box.append(input);
+  const sel = el('select', 'kanban-taskbar-col');
+  cols.forEach((c, i) => sel.append(new Option(`→ ${c.name}`, i)));
+  sel.value = String(kanTaskbarCol);
+  sel.onchange = () => { kanTaskbarCol = Number(sel.value); };
+  box.append(sel);
+  bar.append(box);
+  attachSmartInput(input, {
+    onSubmit: async (text) => {
+      const out = await api('/api/kanban', { action: 'add-card', col: kanTaskbarCol, text });
+      if (out.ok) { kanTaskbarRefocus = true; refresh(); }
+    },
+  });
+  if (kanTaskbarRefocus) { input.focus(); kanTaskbarRefocus = false; }
+}
+
+function kanGearMenu(wrap) {
+  closeKanMenus();
+  const m = el('div', 'kan-menu');
+  const row = el('button', '', `${kanbanTaskbar ? '✓' : '○'}  Card input bar`);
+  row.onclick = () => { closeKanMenus(); toggleKanbanTaskbar(); };
+  m.append(row);
+  wrap.append(m);
+  setTimeout(() => document.addEventListener('click', closeKanMenus, { once: true }), 0);
+}
+function toggleKanbanTaskbar() {
+  kanbanTaskbar = !kanbanTaskbar;
+  try { localStorage.setItem('gretchen-kanban-taskbar', kanbanTaskbar ? '1' : '0'); } catch {}
+  renderKanban();
+}
+
 function kanAddCard(colEl, ci) {
   const input = el('input', 'kan-add-input');
   input.placeholder = 'card — #tag, due friday';
-  input.onkeydown = async (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      const text = input.value.trim();
-      if (text) { const out = await api('/api/kanban', { action: 'add-card', col: ci, text }); if (out.ok) return refresh(); }
-      renderKanban();
-    } else if (e.key === 'Escape') renderKanban();
-  };
   input.onblur = () => renderKanban();
   colEl.querySelector('.kan-add').replaceWith(input);
+  attachSmartInput(input, {
+    onSubmit: async (text) => { const out = await api('/api/kanban', { action: 'add-card', col: ci, text }); if (out.ok) refresh(); else renderKanban(); },
+    onCancel: () => renderKanban(),
+  });
   input.focus();
 }
 
@@ -863,16 +1008,12 @@ function kanCardMenu(ci, card, cardEl) {
 function kanEditCard(ci, card, cardEl) {
   const input = el('input', 'kan-edit');
   input.value = card.title;
-  input.onkeydown = async (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      const text = input.value.trim();
-      if (text) { const out = await api('/api/kanban', { action: 'edit-card', col: ci, i: card.i, text }); if (out.ok) return refresh(); }
-      renderKanban();
-    } else if (e.key === 'Escape') renderKanban();
-  };
   input.onblur = () => renderKanban();
   cardEl.replaceChildren(input);
+  attachSmartInput(input, {
+    onSubmit: async (text) => { const out = await api('/api/kanban', { action: 'edit-card', col: ci, i: card.i, text }); if (out.ok) refresh(); else renderKanban(); },
+    onCancel: () => renderKanban(),
+  });
   input.focus();
   input.select();
 }
