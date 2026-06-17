@@ -8,7 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80' fill='%23d97757'>✻</text></svg>" />
   <!-- apply saved style prefs before first paint so there's no flash; light
        theme, terminal font, and circle checkboxes are the defaults -->
-  <script>try{var r=document.documentElement.classList;if(localStorage.getItem('gretchen-theme')!=='dark')r.add('theme-light');if(localStorage.getItem('gretchen-font')==='minimal')r.add('font-minimal');if(localStorage.getItem('gretchen-checkbox')==='square')r.add('checkbox-square')}catch(e){}</script>
+  <script>try{var r=document.documentElement.classList;if(localStorage.getItem('gretchen-theme')!=='dark')r.add('theme-light');if(localStorage.getItem('gretchen-font')==='minimal')r.add('font-minimal');if(localStorage.getItem('gretchen-checkbox')==='square')r.add('checkbox-square');if(localStorage.getItem('gretchen-collapse')==='hide')r.add('collapse-hide')}catch(e){}</script>
 </head>
 <body>
   <div id="app">
@@ -26,17 +26,23 @@
       <nav id="nav-views">
         <button class="navbtn active" data-view="board"><span class="navicon">📥</span> inbox</button>
         <button class="navbtn" data-view="calendar"><span class="navicon">📅</span> calendar</button>
+        <button class="navbtn" data-view="kanban"><span class="navicon">🗂️</span> kanban</button>
         <button class="navbtn" data-view="archive"><span class="navicon">🗄️</span> archive</button>
         <button class="navbtn" data-view="time"><span class="navicon">🕐</span> time log</button>
         <button class="navbtn" data-view="settings"><span class="navicon">⚙️</span> settings</button>
       </nav>
       <div id="wellness" class="side-section"></div>
       <div class="side-section">
-        <div class="side-head">projects <button id="new-project" title="new project">+</button></div>
+        <div class="side-head collapsible" id="projects-head">
+          <span class="side-head-label">projects</span>
+          <button id="new-project" title="new project">+</button>
+        </div>
         <div id="projects"></div>
       </div>
       <div class="side-section">
-        <div class="side-head">tags</div>
+        <div class="side-head collapsible" id="tags-head">
+          <span class="side-head-label">tags</span>
+        </div>
         <div id="tags"></div>
       </div>
       <div id="stats" class="side-section dim"></div>
@@ -92,6 +98,15 @@
         </div>
         <div id="cal-grid"></div>
         <div id="cal-foot" class="dim"></div>
+      </section>
+
+      <section id="view-kanban" class="view hidden">
+        <div id="kanban-head">
+          <h1>kanban</h1>
+          <span id="kanban-filter" class="hidden"></span>
+          <span class="spacer"></span>
+        </div>
+        <div id="kanban-board"></div>
       </section>
 
       <section id="view-archive" class="view hidden">

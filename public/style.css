@@ -69,9 +69,13 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   display: flex;
   flex-direction: column;
   gap: 16px;
-  /* collapse slides the panel out (margin-left) so its 220px content never
-     reflows — see #app.sidebar-collapsed #sidebar */
-  transition: margin-left .24s cubic-bezier(.4, 0, .2, 1), opacity .2s ease;
+  /* collapse animates either width (→ icon rail, default) or margin-left
+     (→ slide away, deprecated) — see the .sidebar-collapsed rules below */
+  transition: margin-left .24s cubic-bezier(.4, 0, .2, 1),
+    width .24s cubic-bezier(.4, 0, .2, 1),
+    min-width .24s cubic-bezier(.4, 0, .2, 1),
+    padding .24s cubic-bezier(.4, 0, .2, 1),
+    opacity .2s ease;
 }
 .brand { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
 .spark { color: var(--accent); }
@@ -161,9 +165,8 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 /* drag-and-drop reordering */
 .task { cursor: grab; }
 .task input, .task button, .task select, .task .tag { cursor: pointer; }
-.task.dragging { opacity: 0.4; cursor: grabbing; }
-.task.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-.task.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+/* the dragged row reads as a placeholder slot; the others slide around it */
+.task.dragging { opacity: 0.4; cursor: grabbing; background: var(--bg3); border-style: dashed; border-color: var(--accent); }
 
 /* ── prompt + suggestions ────────────────────────────── */
 #promptwrap { margin-top: 12px; }
@@ -220,6 +223,59 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .cal-ext-t { overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
 .cal-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
 .day-view .cal-ext { margin: 2px 0; font-size: 13px; }
+
+/* ── kanban ──────────────────────────────────────────── */
+#kanban-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+#kanban-filter { color: var(--yellow); }
+#kanban-board { flex: 1; display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; min-height: 0; }
+.kan-col {
+  flex: 0 0 280px; max-height: 100%; display: flex; flex-direction: column;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 8px;
+}
+.kan-col.col-dragging { opacity: 0.4; }
+.kan-col.drop-into { border-color: var(--accent); }
+.kan-col.col-drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.kan-col.col-drop-after { box-shadow: inset -3px 0 0 var(--accent); }
+.kan-col-head { position: relative; display: flex; align-items: center; gap: 6px; padding: 2px 4px 8px; cursor: grab; }
+.kan-col-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kan-col-count { color: var(--dim); font-size: 12px; }
+.kan-col-menu, .kan-card-menu {
+  background: none; border: none; color: var(--dim); padding: 0 5px; line-height: 1; border-radius: 5px;
+}
+.kan-col-menu:hover, .kan-card-menu:hover { color: var(--accent); background: var(--bg3); }
+.kan-cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 8px; }
+.kan-card {
+  position: relative; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 24px 8px 10px; cursor: grab; font-size: 13px;
+}
+.kan-card:hover { border-color: var(--accent); }
+.kan-card.dragging { opacity: 0.4; border-style: dashed; border-color: var(--accent); }
+.kan-card.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.kan-card.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.kan-card-title { white-space: pre-wrap; word-break: break-word; }
+.kan-card-title .tag { color: var(--yellow); cursor: pointer; }
+.kan-card-meta { margin-top: 4px; }
+.kan-card-meta .date { font-size: 12px; }
+.kan-card-menu { position: absolute; top: 5px; right: 4px; display: none; font-size: 12px; }
+.kan-card:hover .kan-card-menu { display: block; }
+.kan-add {
+  margin-top: 8px; padding: 6px 8px; color: var(--dim); cursor: pointer; border-radius: 6px; font-size: 13px;
+}
+.kan-add:hover { background: var(--bg3); color: var(--accent); }
+.kan-add-input, .kan-rename, .kan-edit { width: 100%; }
+.kan-add-input, .kan-edit { margin-top: 8px; }
+.kan-addcol { flex: 0 0 220px; }
+.kan-addcol-btn { padding: 8px 12px; color: var(--dim); cursor: pointer; border-radius: 10px; border: 1px dashed var(--border); }
+.kan-addcol-btn:hover { color: var(--accent); border-color: var(--accent); }
+.kan-addcol input { width: 100%; }
+.kan-menu {
+  position: absolute; top: 100%; right: 0; z-index: 20; display: flex; flex-direction: column;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 120px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+}
+.kan-menu button { background: none; border: none; text-align: left; padding: 5px 8px; border-radius: 5px; }
+.kan-menu button:hover { background: var(--bg3); color: var(--accent); }
+.kan-menu button.danger:hover { color: var(--red); }
 
 /* ── archive / time ──────────────────────────────────── */
 .arch-h1 { color: var(--accent); margin: 14px 0 2px; font-size: 15px; }
@@ -368,9 +424,23 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 #topbar { display: flex; justify-content: flex-start; padding: 8px 14px 0; }
 #topbar .sidebar-toggle .panel-fill { display: block; }
 #app:not(.sidebar-collapsed) #topbar { display: none; }
-/* slide the panel off to the left and let #main grow into the space; the
-   negative margin equals the sidebar width, so it animates smoothly */
-#app.sidebar-collapsed #sidebar { margin-left: -220px; opacity: 0; pointer-events: none; }
+
+/* deprecated collapse — slide the whole panel off to the left and let #main
+   grow into the space; the top-bar shows the expander */
+:root.collapse-hide #app.sidebar-collapsed #sidebar { margin-left: -220px; opacity: 0; pointer-events: none; }
+
+/* default collapse — shrink to a slim icon rail (the nav emojis stay,
+   everything else hides); no top-bar needed, the rail's own toggle expands */
+:root:not(.collapse-hide) #app.sidebar-collapsed #topbar { display: none; }
+:root:not(.collapse-hide) #app.sidebar-collapsed #sidebar {
+  width: 58px; min-width: 58px; padding: 14px 6px; gap: 10px;
+}
+:root:not(.collapse-hide) #app.sidebar-collapsed #sidebar > :not(.brand):not(#nav-views) { display: none; }
+:root:not(.collapse-hide) #app.sidebar-collapsed .brand { justify-content: center; }
+:root:not(.collapse-hide) #app.sidebar-collapsed .brand-name { display: none; }
+:root:not(.collapse-hide) #app.sidebar-collapsed #nav-views { gap: 4px; }
+:root:not(.collapse-hide) #app.sidebar-collapsed .navbtn { font-size: 0; text-align: center; padding: 9px 0; }
+:root:not(.collapse-hide) #app.sidebar-collapsed .navbtn .navicon { font-size: 20px; }
 
 /* ── vim-like modes (badge · command line · selection) ─ */
 .mode-badge {
@@ -383,3 +453,9 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .mode-revise { color: var(--yellow); border-color: var(--yellow); }
 #cmdline { color: var(--accent); font-size: 13px; margin-bottom: 6px; }
 .task.selected { border-color: var(--accent); background: var(--bg3); }
+
+/* ── collapsible sidebar sections (projects · tags) ──── */
+.side-head.collapsible { cursor: pointer; user-select: none; }
+.side-head.collapsible:hover { font-weight: 700; color: var(--fg); }
+.side-section.collapsed #projects,
+.side-section.collapsed #tags { display: none; }

@@ -16,6 +16,7 @@ let cmdPending = false;  // a ':' was pressed; waiting for the n/e/r letter
 let sugSel = 0;          // selected row in the suggestion strip
 let suggestions = [];    // current strip items: { label, detail, apply }
 let dragFrom = null;     // file index of the task being dragged, or null
+let dragEl = null;       // the row element being dragged (for live reordering)
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DATE_CTX = /(@|\bdue:?\s+)([\w-]*)$/i;
@@ -24,6 +25,7 @@ const HASH_CTX = /#([\w/-]*)$/;
 
 const COMMANDS = [
   { cmd: 'cal', desc: 'open the calendar' },
+  { cmd: 'kanban', desc: 'open the kanban board' },
   { cmd: 'project', desc: 'open or create a project', arg: '<name>' },
   { cmd: 'inbox', desc: 'back to the inbox' },
   { cmd: 'move', desc: 'move selected/last task to a project', arg: '<name>' },
@@ -152,6 +154,7 @@ function render() {
   renderTimerbar();
   if (view === 'board') renderBoard();
   if (view === 'calendar') renderCalendar();
+  if (view === 'kanban') renderKanban();
   if (view === 'time') renderTime();
   if (view === 'settings') renderSettings();
 }
@@ -306,72 +309,65 @@ function renderTask(t) {
   const d = dateSpan(t);
   if (d) row.append(d);
 
-  // drag-and-drop reordering. A task moves with its sub-tasks (its "block"),
-  // mirroring the ↑/↓ buttons. Disabled while a tag filter hides rows, since
-  // the visible order wouldn't match the file order we reorder against.
+  // Live drag-and-drop reorder: while a row is dragged, the others slide out of
+  // the way in real time (see the #tasks dragover handler), and the new order
+  // commits on release. Disabled under a tag filter, since the visible order
+  // wouldn't match the file order we reorder against.
   if (!tagFilter) {
     row.draggable = true;
+    row.dataset.fi = t.i; // file index, read back on commit
     row.addEventListener('dragstart', (e) => {
+      dragEl = row;
       dragFrom = t.i;
-      row.classList.add('dragging');
+      requestAnimationFrame(() => row.classList.add('dragging')); // after the drag image is grabbed
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', String(t.i)); // Firefox needs a payload
     });
-    row.addEventListener('dragend', () => { dragFrom = null; clearDropMarkers(); });
-    // a drop only fires when both dragenter and dragover cancel the default
-    const allow = (e) => { if (dragFrom != null) e.preventDefault(); };
-    row.addEventListener('dragenter', allow);
-    row.addEventListener('dragover', (e) => {
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      clearRowTransforms();
       if (dragFrom == null) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      const rect = row.getBoundingClientRect();
-      const after = e.clientY - rect.top > rect.height / 2;
-      clearDropMarkers();
-      row.classList.add(after ? 'drop-after' : 'drop-before');
-    });
-    row.addEventListener('drop', (e) => {
-      e.preventDefault();
-      e.stopPropagation(); // handled here; don't let the list-area drop also fire
-      if (dragFrom == null) return;
-      const rect = row.getBoundingClientRect();
-      const after = e.clientY - rect.top > rect.height / 2;
+      // commit: place the dragged task before whatever row now follows it
+      const next = row.nextElementSibling;
+      const to = next && next.dataset.fi != null ? Number(next.dataset.fi) : S.tasks.length;
       const from = dragFrom;
+      dragEl = null;
       dragFrom = null;
-      clearDropMarkers();
-      op('reorder', from, dropTargetIndex(S.tasks, t.i, after));
+      op('reorder', from, to);
     });
   }
   return row;
 }
 
-// block boundaries as file indices — each top-level task starts a block that
-// includes the more-indented tasks below it
-function blockStarts(tasks) {
-  const starts = [];
-  for (let i = 0; i < tasks.length; ) {
-    starts.push(i);
-    let j = i + 1;
-    while (j < tasks.length && (tasks[j].indent || 0) > (tasks[i].indent || 0)) j++;
-    i = j;
+// clear any leftover slide transforms on the task rows
+function clearRowTransforms() {
+  for (const r of $('tasks').children) { r.style.transition = ''; r.style.transform = ''; }
+}
+
+// element-keyed FLIP for live dragging: the rows persist during a drag, so we
+// key by the node itself — which also stays correct when two tasks share a title
+function captureRects(list, except) {
+  const m = new Map();
+  for (const c of list.children)
+    if (c.classList.contains('task') && c !== except) m.set(c, c.getBoundingClientRect().top);
+  return m;
+}
+function playRectFlip(map, dur = 180) {
+  const moved = [];
+  for (const [node, prevTop] of map) {
+    const delta = prevTop - node.getBoundingClientRect().top;
+    if (!delta) continue;
+    node.style.transition = 'transform 0s';
+    node.style.transform = `translateY(${delta}px)`;
+    moved.push(node);
   }
-  return starts;
-}
-
-// where a drop on `hoverIndex` lands: the hovered block's start (above) or the
-// next block's start (below), or the list end
-function dropTargetIndex(tasks, hoverIndex, after) {
-  const starts = blockStarts(tasks);
-  let bStart = 0;
-  for (const s of starts) { if (s <= hoverIndex) bStart = s; else break; }
-  if (!after) return bStart;
-  const next = starts.find((s) => s > bStart);
-  return next == null ? tasks.length : next;
-}
-
-function clearDropMarkers() {
-  document.querySelectorAll('.task.drop-before, .task.drop-after')
-    .forEach((r) => r.classList.remove('drop-before', 'drop-after'));
+  if (!moved.length) return;
+  requestAnimationFrame(() => {
+    for (const node of moved) {
+      node.style.transition = `transform ${dur}ms cubic-bezier(.2,.7,.3,1)`;
+      node.style.transform = '';
+    }
+  });
 }
 
 async function op(name, index, arg) {
@@ -491,6 +487,7 @@ async function runCommand(raw) {
   const go = (v) => { setView(v); render(); };
 
   if (['cal', 'calendar'].includes(c)) return go('calendar');
+  if (['kanban', 'kan'].includes(c)) return go('kanban');
   if (['archived'].includes(c)) return go('archive');
   if (['time', 'timer', 'csv'].includes(c)) return go('time');
   if (['stats'].includes(c)) return toast($('stats').textContent.replace(/\n/g, ' · '));
@@ -576,6 +573,278 @@ $('prompt').addEventListener('input', () => {
   updateSuggestions();
 });
 
+/* ── kanban board ──────────────────────────────────────────────────────
+   A standalone board (kanban.md): columns are headings, cards are tasks.
+   Drag a card between columns to change its status; drag column headers to
+   reorder. Cards reuse the board's tag colouring + date span. */
+let kanban = null;          // last GET /api/kanban
+let kanCardDrag = null;     // { col, i } of the card being dragged
+let kanColDrag = null;      // index of the column being dragged
+
+function kanCardVisible(card) {
+  return !tagFilter || (card.tags || []).includes(tagFilter);
+}
+function kanClearMarkers() {
+  document.querySelectorAll('.kan-card.drop-before, .kan-card.drop-after')
+    .forEach((x) => x.classList.remove('drop-before', 'drop-after'));
+  document.querySelectorAll('.kan-col.drop-into, .kan-col.col-drop-before, .kan-col.col-drop-after')
+    .forEach((x) => x.classList.remove('drop-into', 'col-drop-before', 'col-drop-after'));
+}
+function closeKanMenus() {
+  document.querySelectorAll('.kan-menu').forEach((m) => m.remove());
+}
+
+async function renderKanban() {
+  const board = $('kanban-board');
+  if (!board) return;
+  kanban = await api('/api/kanban');
+  const cols = kanban.columns || [];
+
+  const fc = $('kanban-filter');
+  if (fc) {
+    fc.classList.toggle('hidden', !tagFilter);
+    fc.textContent = tagFilter ? `${tagFilter} — click the tag again to clear` : '';
+    fc.style.color = (tagFilter && tagColor(tagFilter)) || '';
+  }
+
+  board.replaceChildren(...cols.map((col, ci) => kanColumn(col, ci)));
+
+  // + Add list
+  const addCol = el('div', 'kan-addcol');
+  const addBtn = el('div', 'kan-addcol-btn', '+ Add list');
+  addBtn.onclick = () => {
+    const input = el('input');
+    input.placeholder = 'list name';
+    input.onkeydown = async (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        const name = input.value.trim();
+        if (name) { const out = await api('/api/kanban', { action: 'add-column', name }); if (out.ok) return refresh(); }
+        renderKanban();
+      } else if (e.key === 'Escape') renderKanban();
+    };
+    input.onblur = () => renderKanban();
+    addCol.replaceChildren(input);
+    input.focus();
+  };
+  addCol.append(addBtn);
+  board.append(addCol);
+}
+
+function kanColumn(col, ci) {
+  const colEl = el('div', 'kan-col');
+  colEl.dataset.col = ci;
+
+  const head = el('div', 'kan-col-head');
+  head.draggable = true;
+  head.addEventListener('dragstart', (e) => {
+    kanColDrag = ci;
+    colEl.classList.add('col-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', `col:${ci}`);
+  });
+  head.addEventListener('dragend', () => {
+    kanColDrag = null;
+    kanClearMarkers();
+    document.querySelectorAll('.kan-col.col-dragging').forEach((c) => c.classList.remove('col-dragging'));
+  });
+  const name = el('span', 'kan-col-name', col.name);
+  name.title = 'double-click to rename';
+  name.ondblclick = () => kanRename(colEl, ci, col.name);
+  const shown = tagFilter ? col.cards.filter(kanCardVisible).length : col.cards.length;
+  const count = el('span', 'kan-col-count', String(shown));
+  const menu = el('button', 'kan-col-menu', '⋯');
+  menu.title = 'list actions';
+  menu.onclick = (e) => { e.stopPropagation(); kanColMenu(ci, col, menu); };
+  head.append(name, count, menu);
+  colEl.append(head);
+
+  const list = el('div', 'kan-cards');
+  for (const card of col.cards) if (kanCardVisible(card)) list.append(kanCard(card, ci));
+  colEl.append(list);
+
+  const adder = el('div', 'kan-add', '+ Add a card');
+  adder.onclick = () => kanAddCard(colEl, ci);
+  colEl.append(adder);
+
+  // dropping a card onto the column's empty space appends to the end
+  colEl.addEventListener('dragover', (e) => {
+    if (kanCardDrag) {
+      if (e.target.closest('.kan-card')) return; // a card handles it precisely
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      kanClearMarkers();
+      colEl.classList.add('drop-into');
+    } else if (kanColDrag != null) {
+      e.preventDefault();
+      const r = colEl.getBoundingClientRect();
+      const after = e.clientX - r.left > r.width / 2;
+      kanClearMarkers();
+      colEl.classList.add(after ? 'col-drop-after' : 'col-drop-before');
+    }
+  });
+  colEl.addEventListener('drop', (e) => {
+    if (kanCardDrag && !e.target.closest('.kan-card')) {
+      e.preventDefault();
+      kanMoveCard(kanCardDrag, ci, col.cards.length);
+    } else if (kanColDrag != null) {
+      e.preventDefault();
+      const r = colEl.getBoundingClientRect();
+      const after = e.clientX - r.left > r.width / 2;
+      kanMoveColumn(kanColDrag, ci + (after ? 1 : 0));
+    }
+  });
+
+  return colEl;
+}
+
+function kanCard(card, ci) {
+  const c = el('div', 'kan-card');
+  const title = el('div', 'kan-card-title');
+  for (const part of card.title.split(/(#[\w/-]+)/g)) {
+    if (part.startsWith('#')) {
+      const a = el('span', 'tag', part);
+      const col = tagColor(part);
+      if (col) a.style.color = col;
+      a.onclick = (e) => { e.stopPropagation(); tagFilter = tagFilter === part ? null : part; render(); };
+      title.append(a);
+    } else if (part) title.append(part);
+  }
+  if (card.priority) title.append(' ' + (S.priorities.find((p) => p.key === card.priority)?.emoji || ''));
+  c.append(title);
+  const d = dateSpan(card);
+  if (d) { const meta = el('div', 'kan-card-meta'); meta.append(d); c.append(meta); }
+
+  const menu = el('button', 'kan-card-menu', '⋯');
+  menu.onclick = (e) => { e.stopPropagation(); kanCardMenu(ci, card, c); };
+  c.append(menu);
+
+  c.draggable = true;
+  c.addEventListener('dragstart', (e) => {
+    kanCardDrag = { col: ci, i: card.i };
+    c.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', `card:${ci}:${card.i}`);
+    e.stopPropagation();
+  });
+  c.addEventListener('dragend', () => {
+    kanCardDrag = null;
+    kanClearMarkers();
+    document.querySelectorAll('.kan-card.dragging').forEach((x) => x.classList.remove('dragging'));
+  });
+  c.addEventListener('dragover', (e) => {
+    if (!kanCardDrag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const r = c.getBoundingClientRect();
+    const after = e.clientY - r.top > r.height / 2;
+    kanClearMarkers();
+    c.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  c.addEventListener('drop', (e) => {
+    if (!kanCardDrag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = c.getBoundingClientRect();
+    const after = e.clientY - r.top > r.height / 2;
+    kanMoveCard(kanCardDrag, ci, card.i + (after ? 1 : 0));
+  });
+  return c;
+}
+
+async function kanMoveCard(from, toCol, toI) {
+  kanCardDrag = null;
+  kanClearMarkers();
+  const out = await api('/api/kanban', { action: 'move-card', col: from.col, i: from.i, toCol, toI });
+  if (out.ok) refresh();
+}
+async function kanMoveColumn(from, to) {
+  kanColDrag = null;
+  kanClearMarkers();
+  const out = await api('/api/kanban', { action: 'move-column', from, to });
+  if (out.ok) refresh();
+}
+
+function kanAddCard(colEl, ci) {
+  const input = el('input', 'kan-add-input');
+  input.placeholder = 'card — #tag, due friday';
+  input.onkeydown = async (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      const text = input.value.trim();
+      if (text) { const out = await api('/api/kanban', { action: 'add-card', col: ci, text }); if (out.ok) return refresh(); }
+      renderKanban();
+    } else if (e.key === 'Escape') renderKanban();
+  };
+  input.onblur = () => renderKanban();
+  colEl.querySelector('.kan-add').replaceWith(input);
+  input.focus();
+}
+
+function kanRename(colEl, ci, current) {
+  const input = el('input', 'kan-rename');
+  input.value = current;
+  input.onkeydown = async (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      const name = input.value.trim();
+      if (name && name !== current) { const out = await api('/api/kanban', { action: 'rename-column', col: ci, name }); if (out.ok) return refresh(); }
+      renderKanban();
+    } else if (e.key === 'Escape') renderKanban();
+  };
+  input.onblur = () => renderKanban();
+  colEl.querySelector('.kan-col-head').replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
+function kanColMenu(ci, col, anchor) {
+  closeKanMenus();
+  const m = el('div', 'kan-menu');
+  const rename = el('button', '', 'Rename');
+  rename.onclick = () => { closeKanMenus(); kanRename(anchor.closest('.kan-col'), ci, col.name); };
+  const del = el('button', 'danger', 'Delete list');
+  del.onclick = async () => {
+    closeKanMenus();
+    if (col.cards.length && !confirm(`Delete "${col.name}" and its ${col.cards.length} card(s)?`)) return;
+    const out = await api('/api/kanban', { action: 'delete-column', col: ci, force: true });
+    if (out.ok) refresh();
+  };
+  m.append(rename, del);
+  anchor.closest('.kan-col-head').append(m);
+  setTimeout(() => document.addEventListener('click', closeKanMenus, { once: true }), 0);
+}
+
+function kanCardMenu(ci, card, cardEl) {
+  closeKanMenus();
+  const m = el('div', 'kan-menu');
+  const edit = el('button', '', 'Edit');
+  edit.onclick = () => { closeKanMenus(); kanEditCard(ci, card, cardEl); };
+  const del = el('button', 'danger', 'Delete');
+  del.onclick = async () => { closeKanMenus(); const out = await api('/api/kanban', { action: 'delete-card', col: ci, i: card.i }); if (out.ok) refresh(); };
+  m.append(edit, del);
+  cardEl.append(m);
+  setTimeout(() => document.addEventListener('click', closeKanMenus, { once: true }), 0);
+}
+
+function kanEditCard(ci, card, cardEl) {
+  const input = el('input', 'kan-edit');
+  input.value = card.title;
+  input.onkeydown = async (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      const text = input.value.trim();
+      if (text) { const out = await api('/api/kanban', { action: 'edit-card', col: ci, i: card.i, text }); if (out.ok) return refresh(); }
+      renderKanban();
+    } else if (e.key === 'Escape') renderKanban();
+  };
+  input.onblur = () => renderKanban();
+  cardEl.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
 /* ── views ─────────────────────────────────────────────────────────── */
 function setView(v) {
   view = v;
@@ -585,6 +854,7 @@ function setView(v) {
   $(`view-${v}`).classList.remove('hidden');
   if (v === 'archive') renderArchive();
   if (v === 'calendar') renderCalendar();
+  if (v === 'kanban') renderKanban();
   if (v === 'time') renderTime();
   if (v === 'settings') renderSettings();
   if (v === 'board') $('prompt').focus();
@@ -627,17 +897,29 @@ function newProjectPrompt() {
   }
   row.querySelector('input').focus();
 }
-// dropping in the empty space below the task rows sends the task to the bottom
-// (row drops call stopPropagation, so this only runs for the gap)
-$('tasks').addEventListener('dragover', (e) => { if (dragFrom != null) e.preventDefault(); });
-$('tasks').addEventListener('drop', (e) => {
-  if (dragFrom == null) return;
+// Live reorder: as the cursor moves, slot the dragged row into place among the
+// others and slide the displaced rows to make room. The order commits on the
+// row's dragend. Dropping in the empty space below sends the task to the bottom.
+$('tasks').addEventListener('dragover', (e) => {
+  if (dragEl == null) return;
   e.preventDefault();
-  const from = dragFrom;
-  dragFrom = null;
-  clearDropMarkers();
-  op('reorder', from, S.tasks.length); // arg past the end → append
+  e.dataTransfer.dropEffect = 'move';
+  const list = $('tasks');
+  const rows = [...list.children].filter((c) => c.classList.contains('task') && c !== dragEl);
+  // insert before the first row whose midpoint sits below the cursor; past the
+  // last row → null → append to the end
+  let ref = null;
+  for (const r of rows) {
+    const box = r.getBoundingClientRect();
+    if (e.clientY < box.top + box.height / 2) { ref = r; break; }
+  }
+  // already in that slot? nothing to do (avoids re-triggering the slide)
+  if (dragEl.nextElementSibling === ref) return;
+  const first = captureRects(list, dragEl); // measure others before the move
+  list.insertBefore(dragEl, ref);
+  playRectFlip(first); // slide the displaced rows from their old spot to the new one
 });
+$('tasks').addEventListener('drop', (e) => { if (dragEl != null) e.preventDefault(); });
 
 $('new-project').onclick = newProjectPrompt;
 $('file-btn').onclick = () => runCommand('/file');
@@ -1143,6 +1425,16 @@ function applySound(state) {
   if (state === 'on') playClonk(); // a preview when turning it on
   if (view === 'settings') renderSettings();
 }
+// collapsed-sidebar style: 'rail' (default — a slim icon rail) or 'hide'
+// (deprecated — the panel slides fully away). Class lives on <html>.
+function currentCollapseStyle() {
+  return document.documentElement.classList.contains('collapse-hide') ? 'hide' : 'rail';
+}
+function applyCollapseStyle(style) {
+  document.documentElement.classList.toggle('collapse-hide', style === 'hide');
+  try { localStorage.setItem('gretchen-collapse', style); } catch {}
+  if (view === 'settings') renderSettings();
+}
 
 // a segmented control of two-or-more options (theme, font, checkbox shape)
 function segToggle(options, current, onPick) {
@@ -1283,6 +1575,18 @@ function renderSettings() {
   sndCard.append(sndRow);
   sndCard.append(el('div', 'dim', 'A bamboo “clonk” when you check off a task.'));
   body.append(settingsSection('Sound', sndCard));
+
+  // ── sidebar collapse style ──
+  const sbCard = el('div', 'set-card');
+  const sbRow = el('div', 'set-row');
+  sbRow.append(el('span', '', 'When collapsed'));
+  sbRow.append(segToggle(
+    [{ value: 'rail', label: 'default' }, { value: 'hide', label: 'deprecated' }],
+    currentCollapseStyle(), applyCollapseStyle,
+  ));
+  sbCard.append(sbRow);
+  sbCard.append(el('div', 'dim', 'Default keeps a slim icon rail (📥 📅 🗄 🕐 ⚙) when you collapse the sidebar. Deprecated hides it completely, the way it was before.'));
+  body.append(settingsSection('Sidebar', sbCard));
 
   // ── tag colours ──
   body.append(settingsSection('Tag colours', renderTagColorSettings()));
@@ -1628,3 +1932,22 @@ document.addEventListener('keydown', (e) => {
 $('prompt').addEventListener('focus', () => {
   if (mode === 'list') { mode = 'add'; updateModeUI(); if (view === 'board' && S) renderBoard(); }
 });
+
+/* ── collapsible sidebar sections: click a heading to fold its list ──── */
+function setupSectionCollapse(headId, key) {
+  const head = $(headId);
+  if (!head) return;
+  const section = head.closest('.side-section');
+  try { if (localStorage.getItem(key) === '1') section.classList.add('collapsed'); } catch {}
+  head.addEventListener('click', (e) => {
+    if (e.target.closest('button')) { // the + (new project) needs the list open
+      section.classList.remove('collapsed');
+      try { localStorage.setItem(key, '0'); } catch {}
+      return;
+    }
+    const collapsed = section.classList.toggle('collapsed');
+    try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch {}
+  });
+}
+setupSectionCollapse('projects-head', 'gretchen-collapse-projects');
+setupSectionCollapse('tags-head', 'gretchen-collapse-tags');

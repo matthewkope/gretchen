@@ -13,7 +13,7 @@ import {
   loadTasks, saveTasks, loadAllTasks, loadArchive, saveArchive, archiveTask,
   archiveSections, parseInput, sortTasks, taskBlocks, getTags, today,
   dateSuggestions, listProjects, projectExists, slugifyProject, PRIORITIES,
-  SORT_KEYS,
+  SORT_KEYS, loadBoard, saveBoard,
 } from './lib/store.js';
 import { logEntry, timeStats, timeCsvPath, getEmail, setEmail, fmtDuration } from './lib/timer.js';
 import {
@@ -95,6 +95,8 @@ function stateFor(project) {
   const tasks = loadTasks(project);
   const tagCounts = {};
   for (const t of loadAllTasks()) for (const g of getTags(t)) tagCounts[g] = (tagCounts[g] || 0) + 1;
+  // kanban-card tags count too, so they appear in the sidebar and filter
+  for (const c of loadBoard()) for (const card of c.cards) for (const g of getTags(card)) tagCounts[g] = (tagCounts[g] || 0) + 1;
   const archive = loadArchive();
   const all = [];
   for (const name of [null, ...listProjects()]) {
@@ -478,6 +480,93 @@ const routes = {
       if (process.platform === 'darwin') spawn('open', ['-R', file], { stdio: 'ignore', detached: true }).unref();
     } catch {}
     return { ok: true, path: file };
+  },
+
+  // the standalone kanban board (kanban.md): columns + cards
+  'GET /api/kanban'() {
+    return {
+      columns: loadBoard().map((c) => ({
+        name: c.name,
+        cards: c.cards.map((t, i) => ({ ...t, i, tags: getTags(t) })),
+      })),
+    };
+  },
+
+  // every mutation re-reads → mutates → saveBoard, like /api/op
+  'POST /api/kanban'(b) {
+    const board = loadBoard();
+    const col = Number(b.col);
+    const has = (idx, len) => Number.isInteger(idx) && idx >= 0 && idx < len;
+    const card = (cIdx, iIdx) => has(cIdx, board.length) && has(iIdx, board[cIdx].cards.length);
+
+    switch (b.action) {
+      case 'add-card': {
+        if (!has(col, board.length)) return { error: 'stale — refresh' };
+        const task = parseInput(b.text || '');
+        if (!task.title) return { error: 'empty card' };
+        board[col].cards.push({ ...task, indent: 0 });
+        break;
+      }
+      case 'edit-card': {
+        const i = Number(b.i);
+        if (!card(col, i)) return { error: 'stale — refresh' };
+        const parsed = parseInput(b.text || '');
+        if (!parsed.title) return { error: 'empty card' };
+        board[col].cards[i] = { ...parsed, indent: 0 };
+        break;
+      }
+      case 'delete-card': {
+        const i = Number(b.i);
+        if (!card(col, i)) return { error: 'stale — refresh' };
+        board[col].cards.splice(i, 1);
+        break;
+      }
+      case 'move-card': {
+        const fi = Number(b.i);
+        const tc = Number(b.toCol);
+        if (!card(col, fi) || !has(tc, board.length)) return { error: 'stale — refresh' };
+        const [moved] = board[col].cards.splice(fi, 1);
+        let ti = Number.isInteger(Number(b.toI)) && Number(b.toI) >= 0 ? Number(b.toI) : board[tc].cards.length;
+        if (tc === col && fi < ti) ti -= 1; // the splice above shifted the target
+        ti = Math.max(0, Math.min(ti, board[tc].cards.length));
+        board[tc].cards.splice(ti, 0, moved);
+        break;
+      }
+      case 'add-column': {
+        const name = (b.name || '').trim();
+        if (!name) return { error: 'name the column' };
+        board.push({ name, cards: [] });
+        break;
+      }
+      case 'rename-column': {
+        if (!has(col, board.length)) return { error: 'stale — refresh' };
+        const name = (b.name || '').trim();
+        if (!name) return { error: 'name the column' };
+        board[col].name = name;
+        break;
+      }
+      case 'delete-column': {
+        if (!has(col, board.length)) return { error: 'stale — refresh' };
+        if (board[col].cards.length && !b.force)
+          return { error: `"${board[col].name}" has ${board[col].cards.length} card(s)`, needsConfirm: true };
+        board.splice(col, 1);
+        break;
+      }
+      case 'move-column': {
+        const from = Number(b.from);
+        if (!has(from, board.length)) return { error: 'stale — refresh' };
+        const [c] = board.splice(from, 1);
+        let to = Number.isInteger(Number(b.to)) && Number(b.to) >= 0 ? Number(b.to) : board.length;
+        if (from < to) to -= 1;
+        to = Math.max(0, Math.min(to, board.length));
+        board.splice(to, 0, c);
+        break;
+      }
+      default:
+        return { error: `unknown action ${b.action}` };
+    }
+    saveBoard(board);
+    return { ok: true };
   },
 
   'GET /api/time-log'() {
