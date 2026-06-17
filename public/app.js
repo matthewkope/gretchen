@@ -218,12 +218,6 @@ function renderBoard() {
   tf.textContent = tagFilter ? `${tagFilter} — click the tag again to clear` : '';
   tf.style.color = (tagFilter && tagColor(tagFilter)) || ''; // '' falls back to the CSS default
 
-  const sort = $('sort-sel');
-  if (!sort.options.length) {
-    sort.append(...S.sortKeys.map((k) => new Option(`sort: ${k.key}`, k.key)));
-    sort.onchange = async () => { await api('/api/op', { op: 'sort', index: 0, project, arg: sort.value }); refresh(); };
-  }
-
   const list = $('tasks');
   const visible = S.tasks.filter((t) => !tagFilter || t.tags.includes(tagFilter));
   visibleTasks = visible;
@@ -333,6 +327,7 @@ function renderTask(t) {
       const from = dragFrom;
       dragEl = null;
       dragFrom = null;
+      sel = reorderedIndex(S.tasks, from, to); // keep the highlight on the dragged task
       op('reorder', from, to);
     });
   }
@@ -373,6 +368,24 @@ function playRectFlip(map, dur = 180) {
 async function op(name, index, arg) {
   await api('/api/op', { op: name, index, project, arg });
   refresh();
+}
+
+// where the dragged task lands after a reorder — mirrors the server's reorder
+// so the LIST highlight can follow the task to its new spot (not the row it
+// displaced). `to` is the file index it's dropped before (>= length appends).
+function reorderedIndex(tasks, from, to) {
+  const blockRange = (i) => {
+    let start = i;
+    while (start > 0 && (tasks[start].indent || 0) > 0) start--;
+    let end = start + 1;
+    while (end < tasks.length && (tasks[end].indent || 0) > (tasks[start].indent || 0)) end++;
+    return [start, end];
+  };
+  const [s, e] = blockRange(from);
+  const insertAt = !(to >= 0 && to < tasks.length) ? tasks.length : blockRange(to)[0];
+  if (insertAt > s && insertAt < e) return from; // dropped onto itself
+  const at = insertAt >= e ? insertAt - (e - s) : insertAt;
+  return at + (from - s); // preserve the item's offset within its block
 }
 
 function beginEdit(t) {
@@ -581,6 +594,18 @@ let kanban = null;          // last GET /api/kanban
 let kanCardDrag = null;     // { col, i } of the card being dragged
 let kanColDrag = null;      // index of the column being dragged
 
+// collapsed lists, by name, remembered in this browser (like the theme prefs)
+let kanCollapsed = (() => {
+  try { return new Set(JSON.parse(localStorage.getItem('gretchen-kanban-collapsed')) || []); }
+  catch { return new Set(); }
+})();
+function toggleKanCollapse(name) {
+  if (kanCollapsed.has(name)) kanCollapsed.delete(name);
+  else kanCollapsed.add(name);
+  try { localStorage.setItem('gretchen-kanban-collapsed', JSON.stringify([...kanCollapsed])); } catch {}
+  renderKanban();
+}
+
 function kanCardVisible(card) {
   return !tagFilter || (card.tags || []).includes(tagFilter);
 }
@@ -648,6 +673,13 @@ function kanColumn(col, ci) {
     kanClearMarkers();
     document.querySelectorAll('.kan-col.col-dragging').forEach((c) => c.classList.remove('col-dragging'));
   });
+  const collapsed = kanCollapsed.has(col.name);
+  if (collapsed) colEl.classList.add('collapsed');
+  const handle = el('span', 'kan-handle', '⠿');
+  handle.title = 'drag to reorder';
+  const chev = el('button', 'kan-chev', collapsed ? '›' : '⌄');
+  chev.title = collapsed ? 'expand list' : 'collapse list';
+  chev.onclick = (e) => { e.stopPropagation(); toggleKanCollapse(col.name); };
   const name = el('span', 'kan-col-name', col.name);
   name.title = 'double-click to rename';
   name.ondblclick = () => kanRename(colEl, ci, col.name);
@@ -656,7 +688,7 @@ function kanColumn(col, ci) {
   const menu = el('button', 'kan-col-menu', '⋯');
   menu.title = 'list actions';
   menu.onclick = (e) => { e.stopPropagation(); kanColMenu(ci, col, menu); };
-  head.append(name, count, menu);
+  head.append(handle, chev, name, count, menu);
   colEl.append(head);
 
   const list = el('div', 'kan-cards');
@@ -922,8 +954,6 @@ $('tasks').addEventListener('dragover', (e) => {
 $('tasks').addEventListener('drop', (e) => { if (dragEl != null) e.preventDefault(); });
 
 $('new-project').onclick = newProjectPrompt;
-$('file-btn').onclick = () => runCommand('/file');
-$('archive-done-btn').onclick = () => runCommand('/archive');
 
 /* calendar — month/week/day views over every project's dated tasks,
    with the CLI's keys: m/w/d, tab/v cycles, enter zooms, arrows move a day,
@@ -1394,7 +1424,14 @@ function currentTheme() {
 function applyTheme(theme) {
   document.documentElement.classList.toggle('theme-light', theme === 'light');
   try { localStorage.setItem('gretchen-theme', theme); } catch {}
+  notifyNativeTheme(); // recolour the Mac app's title bar to match
   if (view === 'settings') renderSettings(); // reflect the active button
+}
+
+// when running inside the Mac app, tell the native shell the current theme so
+// it can match the window chrome (no-op in a browser)
+function notifyNativeTheme() {
+  try { window.webkit?.messageHandlers?.theme?.postMessage(currentTheme()); } catch {}
 }
 
 // font and checkbox shape are UI prefs like the theme — a class on <html>
@@ -1835,6 +1872,9 @@ function setSidebarCollapsed(collapsed) {
 for (const b of document.querySelectorAll('.sidebar-toggle'))
   b.onclick = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
 try { if (localStorage.getItem('gretchen-sidebar-collapsed') === '1') setSidebarCollapsed(true); } catch {}
+// the Mac app's title-bar button calls this (the in-page toggle is hidden there)
+window.gretchenToggleSidebar = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
+notifyNativeTheme(); // match the app chrome to the theme the head script applied
 
 /* ── vim-like modes: :n add · :e list · :r revise ──────────────────────
    ADD keeps the cursor in the add-a-task bar. LIST blurs it so ↑/↓ walk the

@@ -166,14 +166,15 @@ function stateFor(project) {
 }
 
 // stop the running session: append the local CSV row and, if the entry is live
-// on Toggl, stop it there too. Toggl failures never block the local log.
-async function stopTimer() {
+// on Toggl, stop it there too. The CSV log is the durable record and is written
+// synchronously; the Toggl stop runs in the background so the UI never waits on it.
+function stopTimer() {
   if (!tracking) return null;
   const t = tracking;
   tracking = null;
   logEntry({ description: togglDescription(t.title),
     project: t.project === 'inbox' ? '' : t.project, tags: t.tags, startedAt: t.startedAt, stoppedAt: Date.now() });
-  if (t.id) await stopEntry(t.id).catch(() => {});
+  if (t.id) stopEntry(t.id).catch(() => {}); // fire-and-forget
   return t;
 }
 
@@ -301,25 +302,27 @@ const routes = {
       setEmail(value || '');
       return { ok: true };
     }
-    if (action === 'stop') return { ok: true, stopped: await stopTimer() };
+    if (action === 'stop') return { ok: true, stopped: stopTimer() };
     if (action === 'start') {
-      await stopTimer(); // switching tasks logs the old session first, like the CLI
-      tracking = { title, project: project || 'inbox', tags: tags || [], startedAt: Date.now(), id: null };
-      // also start a live Toggl entry when connected — named after the task,
-      // filed under the matching Toggl project (or first #tag); see toggl.js
+      stopTimer(); // switching tasks logs the old session first, like the CLI
+      // start tracking immediately so the timer shows at once; the local clock
+      // (startedAt) drives the display and doesn't depend on Toggl
+      const session = { title, project: project || 'inbox', tags: tags || [], startedAt: Date.now(), id: null };
+      tracking = session;
+      // create the live Toggl entry in the background — its several API calls
+      // (workspace, project, entry) must not delay the UI; the entry id is only
+      // needed later, to stop it
       if (togglToken()) {
-        try {
-          const { entry, project: proj } = await startEntry({
-            description: togglDescription(title),
-            project: project && project !== 'inbox' ? project : '',
-            tag: tags && tags[0] ? `#${tags[0]}` : null,
-          });
-          tracking.id = entry.id;
-          tracking.startedAt = new Date(entry.start).getTime();
-          return { ok: true, toggl: `→ Toggl project ${proj.name}` };
-        } catch (e) {
-          return { ok: true, toggl: `local only — Toggl start failed: ${e.message}` };
-        }
+        startEntry({
+          description: togglDescription(title),
+          project: project && project !== 'inbox' ? project : '',
+          tag: tags && tags[0] ? `#${tags[0]}` : null,
+        })
+          .then(({ entry }) => {
+            if (tracking === session) tracking.id = entry.id; // still the same session
+            else stopEntry(entry.id).catch(() => {}); // switched away meanwhile — stop the orphan
+          })
+          .catch(() => {});
       }
       return { ok: true };
     }

@@ -7,6 +7,10 @@ import WebKit
 
 let PORT = ProcessInfo.processInfo.environment["GRETCHEN_PORT"] ?? "52770"
 
+// window-chrome colours matching the web app's --bg in each theme
+let LIGHT_BG = NSColor(red: 0.980, green: 0.976, blue: 0.957, alpha: 1)
+let DARK_BG = NSColor(red: 0.102, green: 0.098, blue: 0.082, alpha: 1)
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow!
     var webView: WKWebView!
@@ -26,17 +30,63 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.center()
         window.delegate = self
         window.setFrameAutosaveName("GretchenMain")
+        // white, unified title bar that blends into the (light) web UI; the
+        // theme bridge recolours it if the user switches to dark
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.backgroundColor = LIGHT_BG
 
         let config = WKWebViewConfiguration()
+        // tell the web app it's inside the native shell (it hides its in-page
+        // sidebar toggle in favour of the title-bar button), and let it report
+        // its theme so we can match the window chrome
+        config.userContentController.addUserScript(WKUserScript(
+            source: "document.documentElement.classList.add('native-app')",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.add(self, name: "theme")
         webView = WKWebView(frame: frame, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.uiDelegate = self // so window.alert/confirm/prompt show native panels
-        webView.underPageBackgroundColor = NSColor(red: 0.980, green: 0.976, blue: 0.957, alpha: 1) // --bg, light theme
+        webView.underPageBackgroundColor = LIGHT_BG
         window.contentView = webView
+        addSidebarToggle()
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         loadWhenReady(attempts: 0)
+    }
+
+    // a sidebar-toggle button in the title bar, just right of the traffic
+    // lights (a leading accessory), like Mail/Notes. It drives the web app's
+    // collapse via JS so it works in every collapse mode.
+    func addSidebarToggle() {
+        let button = NSButton()
+        button.isBordered = false
+        button.bezelStyle = .texturedRounded
+        button.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle sidebar")
+        button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .secondaryLabelColor
+        button.target = self
+        button.action = #selector(toggleSidebar)
+        button.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 34, height: 24))
+        container.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+            button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
+            button.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            button.heightAnchor.constraint(equalToConstant: 20),
+        ])
+
+        let acc = NSTitlebarAccessoryViewController()
+        acc.layoutAttribute = .leading
+        acc.view = container
+        window.addTitlebarAccessoryViewController(acc)
+    }
+
+    @objc func toggleSidebar() {
+        webView.evaluateJavaScript("window.gretchenToggleSidebar && window.gretchenToggleSidebar()", completionHandler: nil)
     }
 
     // node may take a moment to bind the port — poll until /api/state answers
@@ -186,6 +236,18 @@ extension AppDelegate: WKUIDelegate {
         a.beginSheetModal(for: window) { resp in
             completionHandler(resp == .alertFirstButtonReturn ? field.stringValue : nil)
         }
+    }
+}
+
+// the web app posts its theme ("light"/"dark") so the title bar and traffic
+// lights match the content
+extension AppDelegate: WKScriptMessageHandler {
+    func userContentController(_ uc: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "theme", let theme = message.body as? String else { return }
+        let dark = theme == "dark"
+        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        window.backgroundColor = dark ? DARK_BG : LIGHT_BG
+        webView.underPageBackgroundColor = dark ? DARK_BG : LIGHT_BG
     }
 }
 

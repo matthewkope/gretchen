@@ -63,12 +63,7 @@
       <section id="view-board" class="view">
         <div id="board-head">
           <h1 id="board-title">inbox</h1>
-          <span id="mode-badge" class="mode-badge mode-add">ADD :n</span>
           <span id="tag-filter" class="hidden"></span>
-          <span class="spacer"></span>
-          <button id="file-btn" title="file tagged inbox tasks into matching projects">file tagged</button>
-          <button id="archive-done-btn" title="archive all completed tasks">archive done</button>
-          <select id="sort-sel" title="sort by"></select>
         </div>
         <div id="tasks"></div>
         <div id="promptwrap">
@@ -79,7 +74,10 @@
             <input id="prompt" autocomplete="off" spellcheck="false"
               placeholder='add a task — "ship report due friday #work" · / for commands' />
           </div>
-          <div id="hint" class="dim">enter adds · dates like “due friday” / “@today” become 📅 · # tags · / commands</div>
+          <div id="mode-line">
+            <span id="mode-badge" class="mode-badge mode-add">ADD :n</span>
+            <div id="hint" class="dim">enter adds · dates like “due friday” / “@today” become 📅 · # tags · / commands</div>
+          </div>
         </div>
       </section>
 

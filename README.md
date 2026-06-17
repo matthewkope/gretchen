@@ -72,6 +72,12 @@ and node at runtime.
   `←`/`→` move a day, `↑`/`↓` a week, `shift+←/→` a whole period, `t` jumps
   to today, `esc` returns to tasks. Click a day to select it, double-click
   to open it.
+- **Kanban** — a standalone board (`~/.gretchen/kanban.md`) whose headings are
+  the columns (To do / In Progress / Done by default; add/rename/reorder/delete
+  your own). Cards are tasks with `#tags`, 📅 dates and priorities; add a card per
+  column, drag cards between columns to change status, drag column headers to
+  reorder, and click a tag (or the sidebar) to filter the board. Separate from the
+  inbox/projects — these statuses live only here.
 - **Archive** — grouped year / month / week, newest first, one-click
   unarchive.
 - **Time** — ▶ on any task starts a timer (⏹ in the top bar stops it; starting
@@ -127,6 +133,7 @@ Identical to the CLI — everything is editable by hand or in Obsidian:
 - `~/.gretchen/tasks.md` — the inbox
 - `~/.gretchen/projects/<name>.md` — one file per project
 - `~/.gretchen/archive.md` — archive, grouped by year/month/week
+- `~/.gretchen/kanban.md` — the kanban board: `#` headings are columns, cards beneath
 - `~/.gretchen/time.csv` — time entries, Toggl-import-ready
 - `~/.gretchen/toggl-token` — Toggl API token, if connected (live sync)
 - `~/.gretchen/toggl-map.json` — project/#tag → Toggl project routing
