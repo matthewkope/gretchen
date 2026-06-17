@@ -64,6 +64,56 @@ function toast(msg) {
   t._h = setTimeout(() => t.classList.add('hidden'), 3500);
 }
 
+/* ── sound: a synthesized "bamboo clonk" when a task box is checked ──────
+   Web Audio, no asset to ship. Two inharmonic sine partials with a fast
+   exponential decay give a hollow, woody knock; a short filtered noise burst
+   is the attack. Gated by the Sounds setting (on by default). */
+let audioCtx = null;
+function soundOn() {
+  try { return localStorage.getItem('gretchen-sound') !== 'off'; } catch { return true; }
+}
+function playClonk() {
+  if (!soundOn()) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const ctx = audioCtx;
+    const t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.value = 0.5;
+    out.connect(ctx.destination);
+
+    // inharmonic partials → hollow bamboo tone, with a tiny downward "clonk" glide
+    for (const [f, g] of [[460, 1.0], [1180, 0.35]]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f * 1.15, t);
+      osc.frequency.exponentialRampToValueAtTime(f, t + 0.035);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(g, t + 0.002);
+      env.gain.exponentialRampToValueAtTime(0.0008, t + 0.17);
+      osc.connect(env).connect(out);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    }
+
+    // short filtered noise burst for the woody attack ("k")
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.02), ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1700;
+    const ng = ctx.createGain();
+    ng.gain.value = 0.3;
+    noise.connect(bp).connect(ng).connect(out);
+    noise.start(t);
+  } catch {}
+}
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -180,21 +230,58 @@ function renderBoard() {
   }
   if (sel >= visible.length) sel = visible.length - 1;
   if (sel < 0) sel = 0;
+  // FLIP step 1 — remember where each task currently sits before we rebuild
+  const firstTops = new Map();
+  for (const child of list.children)
+    if (child.dataset.flipkey != null) firstTops.set(child.dataset.flipkey, child.getBoundingClientRect().top);
+
   const rows = visible.map(renderTask);
   if (mode !== 'add' && rows[sel]) rows[sel].classList.add('selected');
   list.replaceChildren(...rows);
   if (mode !== 'add' && rows[sel]) rows[sel].scrollIntoView({ block: 'nearest' });
+  flipSlide(list, firstTops); // step 2 — slide moved tasks from their old spot to the new one
   updateModeUI();
+}
+
+// FLIP "play": each row that changed position is inverted back to where it was,
+// then transitioned to its new spot — so reordering tasks slides instead of snapping
+function flipSlide(list, firstTops) {
+  if (!firstTops.size || prefersReducedMotion()) return;
+  const moved = [];
+  for (const child of list.children) {
+    const prevTop = firstTops.get(child.dataset.flipkey);
+    if (prevTop == null) continue;
+    const delta = prevTop - child.getBoundingClientRect().top;
+    if (!delta) continue;
+    child.style.transform = `translateY(${delta}px)`;
+    child.style.transition = 'transform 0s';
+    moved.push(child);
+  }
+  if (!moved.length) return;
+  requestAnimationFrame(() => {
+    for (const child of moved) {
+      child.style.transition = 'transform 200ms cubic-bezier(.2,.7,.3,1)';
+      child.style.transform = '';
+    }
+  });
+}
+
+function prefersReducedMotion() {
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  catch { return false; }
 }
 
 function renderTask(t) {
   const row = el('div', `task${t.done ? ' done' : ''}`);
+  // content key for the reorder slide (FLIP): stable across reordering, unlike
+  // the file index which shifts when tasks move
+  row.dataset.flipkey = `${t.title}|${t.date || ''}|${t.priority || ''}`;
   if (t.indent) row.style.marginLeft = `${t.indent * 24}px`;
 
   const cb = el('input');
   cb.type = 'checkbox';
   cb.checked = t.done;
-  cb.onchange = () => op('toggle', t.i);
+  cb.onchange = () => { if (cb.checked) playClonk(); op('toggle', t.i); };
 
   const title = el('span', 'title');
   // tags inside the title are clickable filters
@@ -215,36 +302,15 @@ function renderTask(t) {
   timer.title = isTracking ? 'stop timer' : 'start timer';
   timer.onclick = () => (isTracking ? stopTimer() : startTimer(t));
 
-  const tools = el('span', 'tools');
-  const mk = (label, tip, fn) => {
-    const b = el('button', '', label);
-    b.title = tip;
-    b.onclick = fn;
-    return b;
-  };
-  tools.append(
-    mk('✎', 'edit in the prompt', () => beginEdit(t)),
-    mk('⌫', 'archive (with sub-tasks)', () => op('archive', t.i)),
-    mk('✕', 'delete (with sub-tasks)', () => op('delete', t.i)),
-  );
-  // move-to-project dropdown
-  const move = document.createElement('select');
-  move.title = 'move to project';
-  move.append(new Option('move…', ''), ...S.projects.filter((p) => p.name !== project).map((p) => new Option(p.name, p.name)));
-  move.onchange = () => move.value && op('move', t.i, move.value);
-  tools.append(move);
-
   row.append(cb, timer, title);
   const d = dateSpan(t);
   if (d) row.append(d);
-  row.append(tools);
 
   // drag-and-drop reordering. A task moves with its sub-tasks (its "block"),
   // mirroring the ↑/↓ buttons. Disabled while a tag filter hides rows, since
   // the visible order wouldn't match the file order we reorder against.
   if (!tagFilter) {
     row.draggable = true;
-    row.dataset.i = t.i;
     row.addEventListener('dragstart', (e) => {
       dragFrom = t.i;
       row.classList.add('dragging');
@@ -389,7 +455,8 @@ function updateSuggestions() {
     const partial = v.match(HASH_CTX)[1].toLowerCase();
     suggestions = S.tags
       .filter((t) => t.tag.slice(1).toLowerCase().startsWith(partial))
-      .map((t) => ({ label: t.tag, detail: `${t.count} task${t.count === 1 ? '' : 's'}`, apply: insert(HASH_CTX, `${t.tag} `) }));
+      .map((t) => ({ label: t.tag, detail: `${t.count} task${t.count === 1 ? '' : 's'}`,
+        apply: insert(HASH_CTX, `${t.tag} `), enterInserts: true })); // enter completes the tag (like dates/priorities), so the flow continues instead of submitting early
   } else if (PRIO_CTX.test(v)) {
     const partial = v.match(PRIO_CTX)[2].toLowerCase();
     suggestions = [{ key: 'none', emoji: '' }, ...S.priorities]
@@ -1067,6 +1134,15 @@ function applyCheckbox(style) {
   try { localStorage.setItem('gretchen-checkbox', style); } catch {}
   if (view === 'settings') renderSettings();
 }
+// sound pref: read by soundOn() at play time, so no class is needed
+function currentSound() {
+  return soundOn() ? 'on' : 'off';
+}
+function applySound(state) {
+  try { localStorage.setItem('gretchen-sound', state); } catch {}
+  if (state === 'on') playClonk(); // a preview when turning it on
+  if (view === 'settings') renderSettings();
+}
 
 // a segmented control of two-or-more options (theme, font, checkbox shape)
 function segToggle(options, current, onPick) {
@@ -1195,6 +1271,18 @@ function renderSettings() {
   cbCard.append(cbRow);
   cbCard.append(el('div', 'dim', 'Round checkboxes (default) or the classic squares used before.'));
   body.append(settingsSection('Checkboxes', cbCard));
+
+  // ── sound ──
+  const sndCard = el('div', 'set-card');
+  const sndRow = el('div', 'set-row');
+  sndRow.append(el('span', '', 'Check sound'));
+  sndRow.append(segToggle(
+    [{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }],
+    currentSound(), applySound,
+  ));
+  sndCard.append(sndRow);
+  sndCard.append(el('div', 'dim', 'A bamboo “clonk” when you check off a task.'));
+  body.append(settingsSection('Sound', sndCard));
 
   // ── tag colours ──
   body.append(settingsSection('Tag colours', renderTagColorSettings()));
@@ -1413,6 +1501,16 @@ function renderCalendarSettings() {
   open.href = url;
   urlRow.append(field, copy, open);
   sub.append(urlRow);
+
+  // one-time download (for importing into another calendar, e.g. Google)
+  const dlRow = el('div', 'set-row');
+  const dl = el('button', '', '↓ download .ics');
+  dl.onclick = async () => {
+    const out = await api('/api/export-ics');
+    if (out.ok) toast('saved to Downloads/gretchen-tasks.ics — revealed in Finder');
+  };
+  dlRow.append(dl, el('span', 'dim', 'a one-time file to import elsewhere (e.g. Google Calendar) — not live'));
+  sub.append(dlRow);
   card.append(sub);
 
   return card;
@@ -1520,7 +1618,7 @@ document.addEventListener('keydown', (e) => {
   if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); sel = Math.min(visibleTasks.length - 1, sel + 1); return renderBoard(); }
   if (k === 'ArrowUp' || k === 'k') { e.preventDefault(); sel = Math.max(0, sel - 1); return renderBoard(); }
   if (k === 'Tab') { e.preventDefault(); const t = cur(); if (t) op(e.shiftKey ? 'outdent' : 'indent', t.i); return; }
-  if (k === 'Enter' || k === ' ') { e.preventDefault(); const t = cur(); if (t) op('toggle', t.i); return; }
+  if (k === 'Enter' || k === ' ') { e.preventDefault(); const t = cur(); if (t) { if (!t.done) playClonk(); op('toggle', t.i); } return; }
   if (k === 'r') { e.preventDefault(); return enterMode('revise'); }
   if (k === 'i' || k === 'n' || k === 'a') { e.preventDefault(); return enterMode('add'); }
   if (k === 'x' || k === 'Backspace') { e.preventDefault(); const t = cur(); if (t) op('archive', t.i); return; }

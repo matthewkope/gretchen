@@ -5,7 +5,9 @@
 // running the CLI and the app at the same time is safe.
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   loadTasks, saveTasks, loadAllTasks, loadArchive, saveArchive, archiveTask,
@@ -456,6 +458,26 @@ const routes = {
       return { ok: true, appleCal: appleCalState };
     }
     return { error: `unknown action ${action}` };
+  },
+
+  // save the tasks calendar to ~/Downloads as a one-time .ics file (for importing
+  // elsewhere, e.g. Google Calendar). The server writes it locally so this works
+  // the same in the browser and inside the Mac app's WKWebView; reveal in Finder.
+  'POST /api/export-ics'() {
+    const all = [];
+    for (const name of [null, ...listProjects()])
+      for (const t of loadTasks(name)) all.push({ ...t, project: name || 'inbox' });
+    const file = path.join(os.homedir(), 'Downloads', 'gretchen-tasks.ics');
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, tasksToIcs(all));
+    } catch (e) {
+      return { error: `couldn’t save the file: ${e.message}` };
+    }
+    try {
+      if (process.platform === 'darwin') spawn('open', ['-R', file], { stdio: 'ignore', detached: true }).unref();
+    } catch {}
+    return { ok: true, path: file };
   },
 
   'GET /api/time-log'() {

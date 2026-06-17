@@ -113,7 +113,12 @@ Two-way with your calendar, both display-only — Gretchen never edits your even
 - **Publish your tasks as a calendar.** Subscribe any calendar app to
   `webcal://localhost:5277/tasks.ics` (Apple Calendar: *File → New Calendar
   Subscription*). Every dated task becomes an all-day event; edit a task and the
-  subscription updates on its next refresh. The server has to be running.
+  subscription updates on its next refresh. The server has to be running, and the
+  subscriber must be able to reach `localhost` — so this works for Apple Calendar
+  on the same Mac, but **not** for Google Calendar (its servers can't see your
+  machine). For Google, or any one-time import, use **↓ download .ics** in the
+  same settings card: it writes `~/Downloads/gretchen-tasks.ics` (a static
+  snapshot, not live) and reveals it in Finder.
 
 ## Storage
 

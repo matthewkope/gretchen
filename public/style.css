@@ -148,13 +148,10 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .task .date.overdue { color: var(--red); }
 .task .date.today { color: var(--yellow); }
 .task .src { color: var(--dim); font-size: 12px; }
-.task .tools { display: none; gap: 2px; }
-.task:hover .tools { display: flex; }
-.task .tools button, .task .timer-btn {
+.task .timer-btn {
   padding: 0 6px; font-size: 12px; background: none; border-color: transparent;
+  color: var(--dim);
 }
-.task .tools button:hover { border-color: var(--border); }
-.task .timer-btn { color: var(--dim); }
 .task .timer-btn.on { color: var(--accent); display: inline-block; }
 .task.tracking { background: var(--bg3); border-color: var(--accent); }
 
