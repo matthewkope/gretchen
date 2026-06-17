@@ -309,6 +309,31 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .kan-menu button:hover { background: var(--bg3); color: var(--accent); }
 .kan-menu button.danger:hover { color: var(--red); }
 
+/* card-input autocomplete (tags / dates / priority), floats above the input */
+.kan-input { position: relative; display: block; width: 100%; }
+.kan-suggest {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg2);
+  padding: 4px; max-height: 220px; overflow-y: auto;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+/* the bottom input bar opens its menu upward so it isn't clipped off-screen */
+.kanban-taskbar-box .kan-suggest { top: auto; bottom: calc(100% + 4px); }
+
+/* kanban head gear + the optional bottom input bar */
+.kan-gear-wrap { position: relative; display: inline-flex; }
+.kan-gear { background: none; border: none; color: var(--dim); padding: 2px 7px; border-radius: 6px; font-size: 15px; line-height: 1; }
+.kan-gear:hover { color: var(--accent); background: var(--bg3); }
+.kanban-taskbar { margin-top: 12px; }
+.kanban-taskbar-box {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg2);
+}
+.kanban-taskbar-box:focus-within { border-color: var(--accent); }
+.kanban-taskbar-box .kan-input { flex: 1; }
+.kanban-taskbar-input { width: 100%; background: none; border: none; outline: none; padding: 0; }
+.kanban-taskbar-col { flex: 0 0 auto; }
+
 /* ── archive / time ──────────────────────────────────── */
 .arch-h1 { color: var(--accent); margin: 14px 0 2px; font-size: 15px; }
 .arch-h2 { color: var(--yellow); margin: 10px 0 2px; }
@@ -453,6 +478,18 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .native-app .sidebar-toggle { display: none; }
 .native-app #topbar { display: none !important; }
 .sidebar-toggle:hover { color: var(--fg); background: var(--bg3); border-color: transparent; }
+
+/* collapse trigger — default: click the Gretchen brand; 'button': a toggle
+   icon (the previous way). Picked in Settings → Sidebar. */
+:root:not(.collapse-by-button) .brand { cursor: pointer; }
+:root:not(.collapse-by-button) .brand:hover .brand-name { color: var(--accent); }
+:root:not(.collapse-by-button) .brand .sidebar-toggle { display: none; }
+/* deprecated full-hide mode has no sidebar to click, so the top-bar control
+   stays — shown as the ✻ rather than the panel icon */
+:root:not(.collapse-by-button) #topbar .sidebar-toggle svg { display: none; }
+:root:not(.collapse-by-button) #topbar .sidebar-toggle::before {
+  content: "✻"; color: var(--accent); font-size: 16px; line-height: 1;
+}
 /* brand toggle: shown when the sidebar is open → left panel drawn empty */
 .brand .sidebar-toggle { margin-left: -2px; }
 .brand .sidebar-toggle .panel-fill { display: none; }
@@ -473,7 +510,11 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 :root:not(.collapse-hide) #app.sidebar-collapsed #sidebar > :not(.brand):not(#nav-views) { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed .brand { justify-content: center; }
-:root:not(.collapse-hide) #app.sidebar-collapsed .brand-name { display: none; }
+/* brand-trigger rail: the ✻ stays as the clickable expander (hide the word) */
+:root:not(.collapse-by-button):not(.collapse-hide) #app.sidebar-collapsed .brand-name { font-size: 0; }
+:root:not(.collapse-by-button):not(.collapse-hide) #app.sidebar-collapsed .brand-name .spark { font-size: 16px; }
+/* button-trigger rail: hide the wordmark; the toggle button is the expander */
+:root.collapse-by-button:not(.collapse-hide) #app.sidebar-collapsed .brand-name { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed #nav-views { gap: 4px; }
 :root:not(.collapse-hide) #app.sidebar-collapsed .navbtn { font-size: 0; text-align: center; padding: 7px 0; }
 /* match the expanded nav: the icon stays at the normal 14px body size */

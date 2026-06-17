@@ -1613,6 +1613,16 @@ function applyCollapseStyle(style) {
   try { localStorage.setItem('gretchen-collapse', style); } catch {}
   if (view === 'settings') renderSettings();
 }
+// collapse trigger: 'brand' (default — click the Gretchen logo) or 'button'
+// (the previous toggle-icon way)
+function currentCollapseTrigger() {
+  return document.documentElement.classList.contains('collapse-by-button') ? 'button' : 'brand';
+}
+function applyCollapseTrigger(trigger) {
+  document.documentElement.classList.toggle('collapse-by-button', trigger === 'button');
+  try { localStorage.setItem('gretchen-collapse-trigger', trigger); } catch {}
+  if (view === 'settings') renderSettings();
+}
 
 // a segmented control of two-or-more options (theme, font, checkbox shape)
 function segToggle(options, current, onPick) {
@@ -1764,6 +1774,15 @@ function renderSettings() {
   ));
   sbCard.append(sbRow);
   sbCard.append(el('div', 'dim', 'Default keeps a slim icon rail (📥 📅 🗄 🕐 ⚙) when you collapse the sidebar. Deprecated hides it completely, the way it was before.'));
+
+  const trigRow = el('div', 'set-row');
+  trigRow.append(el('span', '', 'Collapse by'));
+  trigRow.append(segToggle(
+    [{ value: 'brand', label: 'Gretchen logo' }, { value: 'button', label: 'toggle button' }],
+    currentCollapseTrigger(), applyCollapseTrigger,
+  ));
+  sbCard.append(trigRow);
+  sbCard.append(el('div', 'dim', 'Default collapses when you click the ✻ Gretchen logo. Toggle button shows the separate panel icon instead, the way it was before.'));
   body.append(settingsSection('Sidebar', sbCard));
 
   // ── tag colours ──
@@ -2012,6 +2031,12 @@ function setSidebarCollapsed(collapsed) {
 }
 for (const b of document.querySelectorAll('.sidebar-toggle'))
   b.onclick = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
+// default trigger: clicking the Gretchen brand (logo or words) collapses/expands
+document.querySelector('.brand')?.addEventListener('click', (e) => {
+  if (currentCollapseTrigger() !== 'brand') return; // 'button' mode uses the toggle icon
+  if (e.target.closest('.sidebar-toggle')) return;  // let the icon button handle its own click
+  setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
+});
 try { if (localStorage.getItem('gretchen-sidebar-collapsed') === '1') setSidebarCollapsed(true); } catch {}
 // the Mac app's title-bar button calls this (the in-page toggle is hidden there)
 window.gretchenToggleSidebar = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
