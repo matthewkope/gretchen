@@ -433,14 +433,15 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
    everything else hides); no top-bar needed, the rail's own toggle expands */
 :root:not(.collapse-hide) #app.sidebar-collapsed #topbar { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed #sidebar {
-  width: 58px; min-width: 58px; padding: 14px 6px; gap: 10px;
+  width: 42px; min-width: 42px; padding: 14px 4px; gap: 10px;
 }
 :root:not(.collapse-hide) #app.sidebar-collapsed #sidebar > :not(.brand):not(#nav-views) { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed .brand { justify-content: center; }
 :root:not(.collapse-hide) #app.sidebar-collapsed .brand-name { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed #nav-views { gap: 4px; }
-:root:not(.collapse-hide) #app.sidebar-collapsed .navbtn { font-size: 0; text-align: center; padding: 9px 0; }
-:root:not(.collapse-hide) #app.sidebar-collapsed .navbtn .navicon { font-size: 20px; }
+:root:not(.collapse-hide) #app.sidebar-collapsed .navbtn { font-size: 0; text-align: center; padding: 7px 0; }
+/* match the expanded nav: the icon stays at the normal 14px body size */
+:root:not(.collapse-hide) #app.sidebar-collapsed .navbtn .navicon { font-size: 14px; }
 
 /* ── vim-like modes (badge · command line · selection) ─ */
 .mode-badge {
