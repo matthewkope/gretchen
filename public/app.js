@@ -517,7 +517,7 @@ async function runCommand(raw) {
   if (['archived'].includes(c)) return go('archive');
   if (['time', 'timer', 'csv'].includes(c)) return go('time');
   if (['stats'].includes(c)) return toast($('stats').textContent.replace(/\n/g, ' · '));
-  if (['inbox', 'home'].includes(c)) { project = 'inbox'; tagFilter = null; return refresh(); }
+  if (['inbox'].includes(c)) { project = 'inbox'; tagFilter = null; return refresh(); }
   if (['all'].includes(c)) { tagFilter = null; return render(); }
   if (['tag'].includes(c)) { tagFilter = arg ? `#${arg.replace(/^#/, '')}` : null; return render(); }
   if (['sort'].includes(c)) { await api('/api/op', { op: 'sort', index: 0, project, arg: arg || 'priority' }); return refresh(); }
@@ -860,10 +860,13 @@ function attachSmartInput(input, { onSubmit, onCancel } = {}) {
       items = [{ key: 'none', emoji: '' }, ...(S.priorities || [])].filter((x) => x.key.startsWith(p))
         .map((x) => ({ label: `${x.emoji || '·'} ${x.key}`, detail: x.key === 'none' ? 'no priority' : '',
           apply: () => insert(/([a-z]*)$/i, x.emoji ? `${x.emoji} ` : '') }));
-    } else if (DATE_CTX.test(v)) {
-      const p = v.match(DATE_CTX)[2].toLowerCase();
+    } else if (DATE_CTX.test(v) || DUE_PREFIX.test(v)) {
+      // a partial "du"/"due" pops the date menu too, just like the board's bar
+      const m = v.match(DATE_CTX);
+      const p = m ? m[2].toLowerCase() : '';
+      const replaceRe = m ? DATE_CTX : DUE_PREFIX;
       items = (S.dates || []).filter((d) => d.label.startsWith(p) || d.date.startsWith(p))
-        .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: () => insert(DATE_CTX, `📅 ${d.date} `) }));
+        .map((d) => ({ label: d.label, detail: `📅 ${d.date}`, apply: () => insert(replaceRe, `📅 ${d.date} `) }));
     }
     sel = Math.min(sel, Math.max(0, items.length - 1));
     paint();
