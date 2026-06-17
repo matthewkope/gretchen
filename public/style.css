@@ -56,7 +56,7 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 .spacer { flex: 1; }
 h1 { font-size: 16px; font-weight: 600; margin: 0; }
 
-#app { display: flex; height: 100vh; }
+#app { display: flex; height: 100vh; overflow: hidden; }
 
 /* ── sidebar ─────────────────────────────────────────── */
 #sidebar {
@@ -69,6 +69,9 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* collapse slides the panel out (margin-left) so its 220px content never
+     reflows — see #app.sidebar-collapsed #sidebar */
+  transition: margin-left .24s cubic-bezier(.4, 0, .2, 1), opacity .2s ease;
 }
 .brand { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
 .spark { color: var(--accent); }
@@ -365,7 +368,9 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 #topbar { display: flex; justify-content: flex-start; padding: 8px 14px 0; }
 #topbar .sidebar-toggle .panel-fill { display: block; }
 #app:not(.sidebar-collapsed) #topbar { display: none; }
-#app.sidebar-collapsed #sidebar { display: none; }
+/* slide the panel off to the left and let #main grow into the space; the
+   negative margin equals the sidebar width, so it animates smoothly */
+#app.sidebar-collapsed #sidebar { margin-left: -220px; opacity: 0; pointer-events: none; }
 
 /* ── vim-like modes (badge · command line · selection) ─ */
 .mode-badge {
