@@ -652,7 +652,7 @@ async function runCommand(raw) {
     if (arg === 'clear') return locationAction({ action: 'clear' }, 'location cleared');
     if (arg) return setLocation(arg);
     setView('home');
-    return inlineField($('home-body'), { placeholder: 'city name', onSubmit: setLocation });
+    return cityAutocomplete($('home-body'), setLocation, 'city name, e.g. Falls Church');
   }
   if (['exit', 'quit', 'q'].includes(c)) return toast('this is a website — just close the tab :)');
   toast(`unknown command /${cmd}`);
@@ -1538,6 +1538,67 @@ function inlineField(host, { placeholder, type, onSubmit }) {
   input.focus();
 }
 
+// A fill-in-the-blank city picker: as you type it queries the geocoder and
+// drops down matching places ("ashburn" → "Ashburn, Virginia, US"). Pick one
+// with the mouse or ↑/↓+Enter; onPick gets the resolved { name, lat, lon, tz }.
+// Enter with nothing highlighted falls back to a plain text lookup.
+function cityAutocomplete(host, onPick, placeholder = 'city name, e.g. Falls Church') {
+  const wrap = el('div', 'well-input geo-wrap');
+  const input = el('input', 'geo-input');
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  const menu = el('div', 'geo-menu hidden');
+  wrap.append(input, menu);
+  host.append(wrap);
+
+  let results = [];
+  let sel = -1;
+  let seq = 0; // ignores stale responses that resolve out of order
+  let timer = null;
+
+  const close = () => { menu.classList.add('hidden'); menu.replaceChildren(); results = []; sel = -1; };
+  const draw = () => {
+    menu.replaceChildren(...results.map((r, i) => {
+      const opt = el('div', `geo-opt${i === sel ? ' sel' : ''}`, r.name);
+      opt.onmousedown = (e) => { e.preventDefault(); close(); onPick(r); }; // mousedown beats blur
+      return opt;
+    }));
+    menu.classList.toggle('hidden', results.length === 0);
+  };
+  const run = async (q) => {
+    const mine = ++seq;
+    if (!q) return close();
+    let out;
+    try { out = await api(`/api/geocode?q=${encodeURIComponent(q)}`); } catch { return; }
+    if (mine !== seq) return; // superseded by a newer keystroke
+    results = out.results || [];
+    sel = results.length ? 0 : -1;
+    draw();
+  };
+
+  input.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => run(input.value.trim()), 220);
+  };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'ArrowDown' && results.length) { e.preventDefault(); sel = (sel + 1) % results.length; draw(); }
+    else if (e.key === 'ArrowUp' && results.length) { e.preventDefault(); sel = (sel - 1 + results.length) % results.length; draw(); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (sel >= 0 && results[sel]) { close(); onPick(results[sel]); }
+      else { const v = input.value.trim(); if (v) { close(); onPick(v); } } // free-typed fallback
+    } else if (e.key === 'Escape') {
+      if (results.length) close();
+      else renderHome();
+    }
+  };
+  input.onblur = () => setTimeout(close, 150); // let an option's mousedown land first
+  input.focus();
+  return input;
+}
+
 // ── home banner (Notion-style cover) ────────────────────────────────
 // Built-in gradient presets; the choice (a preset id or 'custom') lives in
 // localStorage like the other UI prefs. Custom uploads are downscaled in a
@@ -1657,14 +1718,14 @@ function renderHome() {
     sunCard.append(el('div', 'home-big', `☀ ${sun.sunrise}  →  ☾ ${sun.sunset}`));
     if (sun.place) sunCard.append(el('div', 'well-sub dim', sun.place));
     const tools = el('div', 'well-tools');
-    tools.append(mkWellTool('✎', 'change city', () => inlineField(sunCard, { placeholder: 'city name', onSubmit: setLocation })));
+    tools.append(mkWellTool('✎', 'change city', () => cityAutocomplete(sunCard, setLocation, 'city name')));
     tools.append(mkWellTool('×', 'clear location', () => locationAction({ action: 'clear' }, 'location cleared')));
     sunCard.append(tools);
   } else if (sun.located) {
     sunCard.append(el('div', 'dim', 'polar day/night — no sunrise today'));
   } else {
     const add = el('button', 'well-add', '+ set location for sunrise/sunset');
-    add.onclick = () => inlineField(sunCard, { placeholder: 'city name, e.g. Falls Church', onSubmit: setLocation });
+    add.onclick = () => cityAutocomplete(sunCard, setLocation);
     sunCard.append(add);
   }
   grid.append(sunCard);
@@ -2031,8 +2092,13 @@ async function ouraAction(body, okMsg) {
   const out = await api('/api/oura', body);
   if (out.ok) { toast(okMsg); refresh(); }
 }
-async function setLocation(city) {
-  const out = await api('/api/location', { action: 'set', city });
+// accepts either a resolved place object (from the autocomplete) or a plain
+// city string (free-typed fallback / the /location command)
+async function setLocation(place) {
+  const body = typeof place === 'string'
+    ? { action: 'set', city: place }
+    : { action: 'set', place };
+  const out = await api('/api/location', body);
   if (out.ok) { toast(`location set: ${out.name}`); refresh(); }
 }
 async function locationAction(body, okMsg) {
@@ -2055,6 +2121,15 @@ const UV_BANDS = [
 ];
 const uvBand = (uv) => (uv == null ? null : UV_BANDS.find((b) => uv < b.max));
 const fmtHour = (h) => (h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`);
+// current hour (0–23) in a given IANA timezone, falling back to the browser's
+function hourInTz(tz) {
+  if (!tz) return new Date().getHours();
+  try {
+    return Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(new Date())) % 24;
+  } catch {
+    return new Date().getHours();
+  }
+}
 
 // the home UV card: current index, today's peak, and an hourly bar chart of the
 // whole day so you can see when it climbs and when it's safe to be out
@@ -2065,7 +2140,7 @@ function mkUvCard() {
 
   if (!uv.located) {
     const add = el('button', 'well-add', '+ set location for UV');
-    add.onclick = () => inlineField(card, { placeholder: 'city name, e.g. Falls Church', onSubmit: setLocation });
+    add.onclick = () => cityAutocomplete(card, setLocation);
     card.append(add);
     return card;
   }
@@ -2075,9 +2150,15 @@ function mkUvCard() {
     return card;
   }
 
-  const band = uvBand(uv.now);
+  // compute "now" at render time (in the location's tz) so it tracks the day —
+  // the server's hourly curve is stable, but the current hour keeps advancing
+  const nowHour = hourInTz(uv.tz);
+  const nowEntry = uv.hours.find((h) => h.hour === nowHour);
+  const nowUv = nowEntry ? nowEntry.uv : uv.now;
+
+  const band = uvBand(nowUv);
   const big = el('div', 'home-big');
-  const val = el('span', 'uv-now', uv.now != null ? String(uv.now) : '–');
+  const val = el('span', 'uv-now', nowUv != null ? String(nowUv) : '–');
   if (band) val.style.color = band.color;
   big.append(val);
   if (band) big.append(el('span', 'uv-cat', band.label));
@@ -2092,17 +2173,25 @@ function mkUvCard() {
   const span = uv.hours.filter((h) => h.hour >= from && h.hour <= to);
   const maxUv = Math.max(2, ...span.map((h) => h.uv || 0));
   const chart = el('div', 'uv-chart');
+  const tip = el('div', 'uv-tip hidden'); // floats above the hovered bar
+  chart.append(tip);
   for (const h of span) {
     const col = el('div', 'uv-bar-col');
     const bar = el('div', 'uv-bar');
     bar.style.height = `${Math.round(((h.uv || 0) / maxUv) * 100)}%`;
     const b = uvBand(h.uv);
     if (b) bar.style.background = b.color;
-    if (h.hour === uv.nowHour) col.classList.add('now');
-    col.title = `${fmtHour(h.hour)} · UV ${h.uv ?? 0}`;
+    if (h.hour === nowHour) col.classList.add('now');
+    // hover a bar → show that hour's UV (and band) in a tooltip above it
+    col.onmouseenter = () => {
+      tip.textContent = `${fmtHour(h.hour)} · UV ${h.uv ?? 0}${b ? ` · ${b.label}` : ''}`;
+      tip.style.left = `${col.offsetLeft + col.offsetWidth / 2}px`;
+      tip.classList.remove('hidden');
+    };
     col.append(bar);
     chart.append(col);
   }
+  chart.onmouseleave = () => tip.classList.add('hidden');
   card.append(chart);
   const axis = el('div', 'uv-axis dim');
   axis.append(el('span', '', fmtHour(from)), el('span', '', fmtHour(uv.peakHour ?? Math.round((from + to) / 2))), el('span', '', fmtHour(to)));
@@ -2305,6 +2394,16 @@ function applyStartView(v) {
   if (view === 'settings') renderSettings();
 }
 
+// home widget alignment: 'center' (default — a centered column) or 'left'
+function currentHomeAlign() {
+  return document.documentElement.classList.contains('home-left') ? 'left' : 'center';
+}
+function applyHomeAlign(align) {
+  document.documentElement.classList.toggle('home-left', align === 'left');
+  try { localStorage.setItem('gretchen-home-align', align); } catch {}
+  if (view === 'settings') renderSettings();
+}
+
 // time-entry source for the home "This week" widget: 'local' (time.csv, the
 // default), 'toggl' (Toggl Track API), or 'both' (union of the two)
 function currentTimeSource() {
@@ -2425,6 +2524,18 @@ function renderSettings() {
   startCard.append(startRow);
   startCard.append(el('div', 'dim', 'Which page Gretchen opens to on launch. Takes effect next time you open the app.'));
   body.append(settingsSection('Start page', startCard));
+
+  // ── home layout ──
+  const homeCard = el('div', 'set-card');
+  const homeRow = el('div', 'set-row');
+  homeRow.append(el('span', '', 'Widgets'));
+  homeRow.append(segToggle(
+    [{ value: 'center', label: 'centered' }, { value: 'left', label: 'left' }],
+    currentHomeAlign(), applyHomeAlign,
+  ));
+  homeCard.append(homeRow);
+  homeCard.append(el('div', 'dim', 'Whether the home widgets sit in a centered column or align to the left edge.'));
+  body.append(settingsSection('Home layout', homeCard));
 
   // ── fonts ──
   const fontCard = el('div', 'set-card');
@@ -2629,17 +2740,10 @@ function renderLocationSettings() {
   status.append(el('span', '', sun.located ? (sun.name || 'location set') : 'No location set'));
   card.append(status);
   if (sun.located && sun.sunrise) card.append(el('div', '', `☀ sunrise ${sun.sunrise}     ☾ sunset ${sun.sunset}`));
-  card.append(el('div', 'dim', 'Geocoded once via Open-Meteo (no key); times then compute locally. Stored in ~/.gretchen/location.json.'));
+  card.append(el('div', 'dim', 'Start typing a city and pick from the suggestions (e.g. “ashburn” → Ashburn, Virginia). Geocoded via Open-Meteo (no key); times then compute locally. Stored in ~/.gretchen/location.json.'));
 
-  const row = el('div', 'set-row');
-  const input = el('input');
-  input.placeholder = sun.located ? 'change city' : 'city name, e.g. Falls Church';
-  input.autocomplete = 'off';
-  const submit = () => { const v = input.value.trim(); if (v) setLocation(v); };
-  input.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') submit(); };
-  const save = el('button', '', 'set');
-  save.onclick = submit;
-  row.append(input, save);
+  const row = el('div', 'set-row geo-row');
+  cityAutocomplete(row, setLocation, sun.located ? 'change city' : 'city name, e.g. Falls Church');
   if (sun.located) {
     const clear = el('button', '', 'clear');
     clear.onclick = () => locationAction({ action: 'clear' }, 'location cleared');

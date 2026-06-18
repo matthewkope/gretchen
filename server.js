@@ -28,7 +28,7 @@ import {
   fetchSleepSummary, fmtSleepDuration, fmtClockOffset, OURA_TOKEN_URL,
 } from './lib/oura.js';
 import {
-  loadLocation, saveLocation, clearLocation, geocode, sunTimes, fmtSunTime,
+  loadLocation, saveLocation, clearLocation, geocode, geocodeSearch, sunTimes, fmtSunTime,
 } from './lib/sun.js';
 import { fetchUv } from './lib/uv.js';
 import { tasksToIcs } from './lib/ics.js';
@@ -470,26 +470,45 @@ const routes = {
   },
 
   // set or clear the location for sunrise/sunset (the CLI's /location)
-  async 'POST /api/location'({ action, city }) {
+  async 'POST /api/location'({ action, city, place }) {
     if (action === 'clear') {
       clearLocation();
       uvData = null; // UV is location-bound — drop the stale forecast
       return { ok: true };
     }
     if (action === 'set') {
-      const q = (city || '').trim();
-      if (!q) return { error: 'type a city name' };
-      try {
-        const loc = await geocode(q);
+      let loc = null;
+      // a place chosen from the autocomplete arrives pre-resolved — use it as-is
+      // (no second geocode); a free-typed name still falls back to geocoding
+      if (place && place.lat != null && place.lon != null) {
+        loc = { name: place.name, lat: place.lat, lon: place.lon, tz: place.tz };
+      } else {
+        const q = (city || '').trim();
+        if (!q) return { error: 'type a city name' };
+        try {
+          loc = await geocode(q);
+        } catch (e) {
+          return { error: `lookup failed (${e.message}) — are you online?` };
+        }
         if (!loc) return { error: `no place found for "${q}" — try a city name` };
-        saveLocation(loc);
-        await refreshUv(); // pull the new city's UV so the home card fills right away
-        return { ok: true, name: loc.name };
-      } catch (e) {
-        return { error: `lookup failed (${e.message}) — are you online?` };
       }
+      saveLocation(loc);
+      await refreshUv(); // pull the new city's UV so the home card fills right away
+      return { ok: true, name: loc.name };
     }
     return { error: `unknown action ${action}` };
+  },
+
+  // location autocomplete suggestions (?q=ashburn → matching places).
+  // Errors are swallowed to empty results so typing never spams a toast.
+  async 'GET /api/geocode'(_body, query) {
+    const q = (query?.get('q') || '').trim();
+    if (!q) return { results: [] };
+    try {
+      return { results: await geocodeSearch(q) };
+    } catch {
+      return { results: [] };
+    }
   },
 
   // refresh today's UV forecast on demand (the home card's ↻ button)

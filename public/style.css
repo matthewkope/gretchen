@@ -443,6 +443,20 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .well-input { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .well-input input { flex: 1; min-width: 0; font-size: 12px; padding: 2px 6px; }
 
+/* city autocomplete (location picker for sunrise/sunset + UV) */
+.geo-wrap { position: relative; flex: 1; min-width: 160px; }
+.geo-input { width: 100%; }
+.geo-menu {
+  position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 60;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  overflow-y: auto; max-height: 240px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+.geo-opt {
+  padding: 6px 10px; cursor: pointer; font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.geo-opt.sel, .geo-opt:hover { background: var(--bg3); color: var(--accent); }
+
 /* ── home banner (Notion-style cover) ────────────────── */
 #home-banner {
   position: relative;
@@ -481,6 +495,21 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 
 /* ── home view: today's wellness as cards ────────────── */
+/* Home content sits in a centered 720px column by default; the Home layout
+   setting can left-align it (`home-left` on :root). The banner stays full-bleed
+   either way. h1 + the widget column share margins so they line up. */
+#view-home > h1,
+#home-body {
+  width: 100%;
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+:root.home-left #view-home > h1,
+:root.home-left #home-body {
+  margin-left: 0;
+  margin-right: 0;
+}
 .home-grid {
   display: grid; gap: 16px; margin-top: 6px;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -504,17 +533,28 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .home-big .uv-now { font-weight: 600; }
 .home-big .uv-cat { font-size: 13px; color: var(--dim); text-transform: capitalize; }
 .uv-chart {
+  position: relative; /* anchors the hover tooltip */
   display: flex; align-items: flex-end; gap: 2px;
   height: 56px; margin-top: 8px;
 }
 .uv-bar-col {
   flex: 1; height: 100%; display: flex; align-items: flex-end;
-  border-radius: 3px;
+  border-radius: 3px; cursor: default;
 }
 .uv-bar-col.now { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .uv-bar {
   width: 100%; min-height: 2px; border-radius: 3px 3px 0 0;
-  background: var(--dim); transition: height 0.2s ease;
+  background: var(--dim); transition: height 0.2s ease, filter 0.1s ease;
+}
+.uv-bar-col:hover .uv-bar { filter: brightness(1.25); }
+/* tooltip that follows the hovered bar (left set inline in JS) */
+.uv-tip {
+  position: absolute; bottom: 100%; margin-bottom: 5px;
+  transform: translateX(-50%);
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  padding: 2px 8px; font-size: 11px; white-space: nowrap;
+  pointer-events: none; z-index: 5;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .uv-axis { display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; }
 
