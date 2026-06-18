@@ -2296,6 +2296,15 @@ function applyCollapseTrigger(trigger) {
   if (view === 'settings') renderSettings();
 }
 
+// which view Gretchen opens to on launch: 'home' (default) or 'board' (inbox)
+function currentStartView() {
+  return localStorage.getItem('gretchen-start-view') === 'board' ? 'board' : 'home';
+}
+function applyStartView(v) {
+  try { localStorage.setItem('gretchen-start-view', v); } catch {}
+  if (view === 'settings') renderSettings();
+}
+
 // time-entry source for the home "This week" widget: 'local' (time.csv, the
 // default), 'toggl' (Toggl Track API), or 'both' (union of the two)
 function currentTimeSource() {
@@ -2404,6 +2413,18 @@ function renderSettings() {
   themeRow.append(toggle);
   themeCard.append(themeRow);
   body.append(settingsSection('Appearance', themeCard));
+
+  // ── start page ──
+  const startCard = el('div', 'set-card');
+  const startRow = el('div', 'set-row');
+  startRow.append(el('span', '', 'Open to'));
+  startRow.append(segToggle(
+    [{ value: 'home', label: 'home' }, { value: 'board', label: 'inbox' }],
+    currentStartView(), applyStartView,
+  ));
+  startCard.append(startRow);
+  startCard.append(el('div', 'dim', 'Which page Gretchen opens to on launch. Takes effect next time you open the app.'));
+  body.append(settingsSection('Start page', startCard));
 
   // ── fonts ──
   const fontCard = el('div', 'set-card');
@@ -2714,6 +2735,19 @@ async function calendarAction(body, okMsg) {
   const out = await api('/api/calendars', body);
   if (out.ok) { toast(okMsg); refresh(); }
 }
+
+// open to the user's chosen start page (home by default). The HTML defaults to
+// the inbox/board, so we only need to switch the visible view + active nav when
+// the preference is something else; refresh() renders it once state loads.
+(function bootStartView() {
+  const v = currentStartView();
+  if (v === 'board') return;
+  view = v;
+  for (const s of document.querySelectorAll('.view')) s.classList.add('hidden');
+  $(`view-${v}`)?.classList.remove('hidden');
+  for (const b of document.querySelectorAll('.navbtn'))
+    b.classList.toggle('active', b.dataset.view === v);
+})();
 
 refresh();
 
