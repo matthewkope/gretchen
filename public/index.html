@@ -66,15 +66,7 @@
           <span id="tag-filter" class="hidden"></span>
         </div>
         <div id="tasks"></div>
-        <div id="promptwrap">
-          <div id="suggest" class="hidden"></div>
-          <div id="promptbox">
-            <span class="caret">❯</span>
-            <input id="prompt" autocomplete="off" spellcheck="false"
-              placeholder='add a task — "ship report due friday #work" · / for commands' />
-          </div>
-          <div id="hint" class="dim">↑/↓ select · ⇧↑/↓ move · ⇧←/→ nest · ⌫ delete · enter done · ⇧N add · / commands</div>
-        </div>
+        <div id="board-hint" class="dim">↑/↓ select · ⇧↑/↓ move · ⇧←/→ nest · ⌫ delete · enter done · ⇧N add task · / commands</div>
       </section>
 
       <section id="view-calendar" class="view hidden">
@@ -125,6 +117,19 @@
         <div id="settings-body"></div>
       </section>
     </main>
+  </div>
+  <!-- add-task bar: a top-level overlay (⇧N from any view) so it's never trapped
+       inside a hidden view section -->
+  <div id="promptwrap" class="hidden">
+    <div id="prompt-panel">
+      <div id="promptbox">
+        <span class="caret">❯</span>
+        <input id="prompt" autocomplete="off" spellcheck="false"
+          placeholder='add a task — "ship report due friday #work" · / for commands' />
+      </div>
+      <div id="suggest" class="hidden"></div>
+      <div id="hint" class="dim">enter add · ↑/↓ menu · tab insert · esc close · / commands</div>
+    </div>
   </div>
   <div id="toast" class="hidden"></div>
   <script src="app.js"></script>

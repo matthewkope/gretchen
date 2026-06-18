@@ -181,21 +181,37 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 /* the dragged row reads as a placeholder slot; the others slide around it */
 .task.dragging { opacity: 0.4; cursor: grabbing; background: var(--bg3); border-style: dashed; border-color: var(--accent); }
 
-/* ── prompt + suggestions ────────────────────────────── */
-#promptwrap { margin-top: 12px; }
+/* ── prompt + suggestions (centered overlay, opened with ⇧N) ──────── */
+#promptwrap {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 16vh;
+  background: rgba(8, 8, 10, 0.5);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  animation: prompt-fade 0.12s ease-out;
+}
+@keyframes prompt-fade { from { opacity: 0; } to { opacity: 1; } }
+#prompt-panel {
+  width: min(680px, 92vw);
+  animation: prompt-rise 0.14s ease-out;
+}
+@keyframes prompt-rise { from { transform: translateY(-8px); } to { transform: translateY(0); } }
 #promptbox {
   display: flex; align-items: center; gap: 8px;
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 12px; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 16px; background: var(--bg2);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
 #promptbox:focus-within { border-color: var(--accent); }
 .caret { color: var(--accent); }
 #prompt { flex: 1; background: none; border: none; outline: none; padding: 0; }
-#hint { font-size: 12px; }
+#hint { font-size: 12px; text-align: center; margin-top: 8px; }
+#board-hint { font-size: 12px; margin-top: 12px; }
 #mode-line { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 #suggest {
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg2);
-  margin-bottom: 6px; padding: 4px; max-height: 220px; overflow-y: auto;
+  margin-top: 6px; padding: 4px; max-height: 220px; overflow-y: auto;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
 .sug { display: flex; gap: 10px; padding: 2px 10px; border-radius: 5px; cursor: pointer; }
 .sug .lab { min-width: 110px; }
@@ -242,14 +258,14 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 #kanban-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 #kanban-filter { color: var(--yellow); }
 #kanban-board {
-  flex: 1; display: flex; gap: 14px; align-items: flex-start;
+  flex: 1; display: flex; gap: 12px; align-items: flex-start;
   justify-content: safe center; /* centre the lists; left-align (no clipping) when they overflow */
   overflow-x: auto; overflow-y: hidden; padding: 4px 4px 10px; min-height: 0;
 }
 .kan-col {
-  flex: 0 0 300px; align-self: flex-start; max-height: 100%;
+  flex: 0 0 272px; align-self: flex-start; max-height: 100%; /* Obsidian's default lane width */
   display: flex; flex-direction: column;
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 6px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 8px 6px;
 }
 .kan-col.col-dragging { opacity: 0.4; }
 .kan-col.drop-into { border-color: var(--accent); }
@@ -270,19 +286,16 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 .kan-chev:hover { color: var(--accent); }
 .kan-col-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kan-col-count {
-  color: var(--dim); font-size: 11px; background: var(--bg3);
-  border-radius: 999px; padding: 1px 8px; min-width: 18px; text-align: center;
-}
+.kan-col-count { color: var(--dim); font-size: 13px; padding: 0 3px; } /* plain number, like Obsidian */
 .kan-col-menu, .kan-card-menu {
   background: none; border: none; color: var(--dim); padding: 0 5px; line-height: 1; border-radius: 5px;
 }
 .kan-col-menu:hover, .kan-card-menu:hover { color: var(--accent); background: var(--bg3); }
 
-.kan-cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 8px; padding: 1px; }
+.kan-cards { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 8px; padding: 1px; }
 .kan-card {
-  position: relative; background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
-  padding: 9px 24px 9px 11px; cursor: grab; font-size: 13px; line-height: 1.4;
+  position: relative; background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  padding: 8px 22px 8px 10px; cursor: grab; font-size: 13px; line-height: 1.4;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
   transition: box-shadow .12s ease, border-color .12s ease;
 }
@@ -306,13 +319,13 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .kan-add:hover { background: var(--bg3); color: var(--accent); }
 .kan-add-input, .kan-rename, .kan-edit { width: 100%; }
 .kan-add-input, .kan-edit { margin-top: 8px; }
-.kan-addcol { flex: 0 0 240px; align-self: flex-start; }
+.kan-addcol { flex: 0 0 auto; align-self: flex-start; } /* compact, so it doesn't skew the centred group */
 .kan-addcol-btn {
-  padding: 9px 12px; color: var(--dim); cursor: pointer; border-radius: 10px;
+  padding: 8px 12px; color: var(--dim); cursor: pointer; border-radius: 8px; white-space: nowrap;
   background: color-mix(in srgb, var(--bg2) 60%, transparent); border: 1px dashed var(--border);
 }
 .kan-addcol-btn:hover { color: var(--accent); border-color: var(--accent); }
-.kan-addcol input { width: 100%; }
+.kan-addcol input { width: 160px; }
 .kan-menu {
   position: absolute; top: 100%; right: 0; z-index: 20; display: flex; flex-direction: column;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 130px;
@@ -330,30 +343,23 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   padding: 4px; max-height: 220px; overflow-y: auto;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
-/* the bottom input bar opens its menu upward so it isn't clipped off-screen */
-.kanban-taskbar-box .kan-suggest { top: auto; bottom: calc(100% + 4px); }
 /* keep each row (e.g. "today  📅 2026-06-19") on one line, date right after the label */
 .kan-suggest .sug { white-space: nowrap; }
 .kan-suggest .sug .lab { min-width: 0; }
-
-/* kanban head gear + the optional bottom input bar */
-.kan-gear-wrap { position: relative; display: inline-flex; }
-.kan-gear { background: none; border: none; color: var(--dim); padding: 2px 7px; border-radius: 6px; font-size: 15px; line-height: 1; }
-.kan-gear:hover { color: var(--accent); background: var(--bg3); }
-.kanban-taskbar { margin-top: 12px; }
-.kanban-taskbar-box {
-  display: flex; align-items: center; gap: 8px;
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg2);
-}
-.kanban-taskbar-box:focus-within { border-color: var(--accent); }
-.kanban-taskbar-box .kan-input { flex: 1; }
-.kanban-taskbar-input { width: 100%; background: none; border: none; outline: none; padding: 0; }
-.kanban-taskbar-col { flex: 0 0 auto; }
 
 /* ── archive / time ──────────────────────────────────── */
 .arch-h1 { color: var(--accent); margin: 14px 0 2px; font-size: 15px; }
 .arch-h2 { color: var(--yellow); margin: 10px 0 2px; }
 .arch-h3 { color: var(--dim); margin: 6px 0 2px; font-size: 12px; }
+
+/* collapsible archive groups — click a heading to fold/unfold it */
+.arch-head { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+.arch-head:hover { filter: brightness(1.2); }
+.arch-caret { display: inline-block; font-size: 10px; transition: transform 0.15s; }
+.arch-group.collapsed > .arch-head > .arch-caret { transform: rotate(-90deg); }
+.arch-group.collapsed > .arch-body { display: none; }
+.arch-lvl2, .arch-lvl3 { margin-left: 12px; }
+
 #time-summary { margin: 10px 0; }
 #time-table { border-collapse: collapse; margin-bottom: 10px; }
 #time-table td, #time-table th {

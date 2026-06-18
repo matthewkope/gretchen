@@ -469,16 +469,29 @@ function beginEdit(t) {
   editing = t.i;
   const emoji = t.priority ? ` ${S.priorities.find((p) => p.key === t.priority)?.emoji}` : '';
   $('prompt').value = `${t.title}${emoji}${t.date ? ` 📅 ${t.date}` : ''}`;
-  $('prompt').focus();
+  openPrompt();
   $('hint').textContent = 'editing — enter saves · esc cancels';
 }
 
-const HINT_TEXT = '↑/↓ select · ⇧↑/↓ move · ⇧←/→ nest · ⌫ delete · enter done · ⇧N add · / commands';
+const HINT_TEXT = 'enter add · ↑/↓ menu · tab insert · esc close · / commands';
 function endEdit() {
   editing = null;
   $('prompt').value = '';
   $('hint').textContent = HINT_TEXT;
   updateSuggestions();
+  closePrompt();
+}
+
+// the add-task bar is an overlay: ⇧N (or the /e revise flow) opens it, esc /
+// submitting closes it, and the rest of the board dims behind a backdrop.
+function openPrompt() {
+  $('promptwrap').classList.remove('hidden');
+  $('prompt').focus();
+  updateSuggestions();
+}
+function closePrompt() {
+  $('promptwrap').classList.add('hidden');
+  document.activeElement?.blur(); // drop focus so board / view keys work again
 }
 
 /* ── timer ─────────────────────────────────────────────────────────── */
@@ -601,10 +614,10 @@ async function runCommand(raw) {
   if (['archived'].includes(c)) return go('archive');
   if (['time', 'timer', 'csv'].includes(c)) return go('time');
   if (['stats'].includes(c)) return toast($('stats').textContent.replace(/\n/g, ' · '));
-  if (['inbox'].includes(c)) { project = 'inbox'; tagFilter = null; return refresh(); }
-  if (['all'].includes(c)) { tagFilter = null; return render(); }
-  if (['tag'].includes(c)) { tagFilter = arg ? `#${arg.replace(/^#/, '')}` : null; return render(); }
-  if (['sort'].includes(c)) { await api('/api/op', { op: 'sort', index: 0, project, arg: arg || 'priority' }); return refresh(); }
+  if (['inbox'].includes(c)) { project = 'inbox'; tagFilter = null; setView('board'); return refresh(); }
+  if (['all'].includes(c)) { tagFilter = null; setView('board'); return render(); }
+  if (['tag'].includes(c)) { tagFilter = arg ? `#${arg.replace(/^#/, '')}` : null; setView('board'); return render(); }
+  if (['sort'].includes(c)) { await api('/api/op', { op: 'sort', index: 0, project, arg: arg || 'priority' }); setView('board'); return refresh(); }
   if (['archive', 'clear'].includes(c)) {
     const out = await api('/api/archive-done', { project });
     toast(`archived ${out.count} completed task${out.count === 1 ? '' : 's'}`);
@@ -618,7 +631,7 @@ async function runCommand(raw) {
   if (['project', 'proj', 'projects'].includes(c)) {
     if (!arg) return toast('usage: /project <name> — see the sidebar for the list');
     const out = await api('/api/project', { name: arg });
-    if (out.ok) { project = out.name; tagFilter = null; refresh(); }
+    if (out.ok) { project = out.name; tagFilter = null; setView('board'); refresh(); }
     return;
   }
   if (['move', 'mv'].includes(c)) {
@@ -665,6 +678,7 @@ function submitPrompt() {
   if (v.startsWith('/')) {
     p.value = '';
     updateSuggestions();
+    closePrompt();
     return runCommand(v);
   }
   const submit = editing != null
@@ -673,6 +687,11 @@ function submitPrompt() {
   endEdit();
   submit.then(() => refresh());
 }
+
+// click the dimmed backdrop (anywhere outside the panel) to dismiss the bar
+$('promptwrap').addEventListener('mousedown', (e) => {
+  if (e.target === $('promptwrap')) { e.preventDefault(); endEdit(); }
+});
 
 $('prompt').addEventListener('input', () => {
   const p = $('prompt');
@@ -701,11 +720,6 @@ function toggleKanCollapse(name) {
   try { localStorage.setItem('gretchen-kanban-collapsed', JSON.stringify([...kanCollapsed])); } catch {}
   renderKanban();
 }
-
-// the optional bottom input bar (toggled by the head gear), remembered per browser
-let kanbanTaskbar = (() => { try { return localStorage.getItem('gretchen-kanban-taskbar') === '1'; } catch { return false; } })();
-let kanTaskbarCol = 0;        // which column the bar adds to
-let kanTaskbarRefocus = false; // refocus the bar after a re-render (keep adding)
 
 function kanCardVisible(card) {
   return !tagFilter || (card.tags || []).includes(tagFilter);
@@ -755,8 +769,6 @@ async function renderKanban() {
   };
   addCol.append(addBtn);
   board.append(addCol);
-
-  ensureKanbanChrome(cols); // gear + optional bottom input bar
 }
 
 function kanColumn(col, ci) {
@@ -971,68 +983,6 @@ function attachSmartInput(input, { onSubmit, onCancel } = {}) {
   return input;
 }
 
-// the gear (kanban head) + the optional bottom input bar it toggles
-function ensureKanbanChrome(cols) {
-  const head = $('kanban-head');
-  if (head && !$('kanban-gear-wrap')) {
-    const wrap = el('span', 'kan-gear-wrap');
-    wrap.id = 'kanban-gear-wrap';
-    const gear = el('button', 'kan-gear', '⚙');
-    gear.title = 'kanban settings';
-    gear.onclick = (e) => { e.stopPropagation(); kanGearMenu(wrap); };
-    wrap.append(gear);
-    head.append(wrap);
-  }
-  const section = $('view-kanban');
-  let bar = $('kanban-taskbar');
-  if (!bar && section) {
-    bar = el('div', 'kanban-taskbar hidden');
-    bar.id = 'kanban-taskbar';
-    section.append(bar);
-  }
-  if (!bar) return;
-  bar.classList.toggle('hidden', !kanbanTaskbar);
-  if (kanbanTaskbar) renderKanbanTaskbar(bar, cols);
-  else bar.replaceChildren();
-}
-
-function renderKanbanTaskbar(bar, cols) {
-  if (kanTaskbarCol >= cols.length) kanTaskbarCol = 0;
-  bar.replaceChildren();
-  const box = el('div', 'kanban-taskbar-box');
-  box.append(el('span', 'caret', '❯'));
-  const input = el('input', 'kanban-taskbar-input');
-  input.placeholder = 'add a card — #tag, “due friday”, priority…';
-  box.append(input);
-  const sel = el('select', 'kanban-taskbar-col');
-  cols.forEach((c, i) => sel.append(new Option(`→ ${c.name}`, i)));
-  sel.value = String(kanTaskbarCol);
-  sel.onchange = () => { kanTaskbarCol = Number(sel.value); };
-  box.append(sel);
-  bar.append(box);
-  attachSmartInput(input, {
-    onSubmit: async (text) => {
-      const out = await api('/api/kanban', { action: 'add-card', col: kanTaskbarCol, text });
-      if (out.ok) { kanTaskbarRefocus = true; refresh(); }
-    },
-  });
-  if (kanTaskbarRefocus) { input.focus(); kanTaskbarRefocus = false; }
-}
-
-function kanGearMenu(wrap) {
-  closeKanMenus();
-  const m = el('div', 'kan-menu');
-  const row = el('button', '', `${kanbanTaskbar ? '✓' : '○'}  Card input bar`);
-  row.onclick = () => { closeKanMenus(); toggleKanbanTaskbar(); };
-  m.append(row);
-  wrap.append(m);
-  setTimeout(() => document.addEventListener('click', closeKanMenus, { once: true }), 0);
-}
-function toggleKanbanTaskbar() {
-  kanbanTaskbar = !kanbanTaskbar;
-  try { localStorage.setItem('gretchen-kanban-taskbar', kanbanTaskbar ? '1' : '0'); } catch {}
-  renderKanban();
-}
 
 function kanAddCard(colEl, ci) {
   const input = el('input', 'kan-add-input');
@@ -1119,6 +1069,7 @@ function kanEditCard(ci, card, cardEl) {
 /* ── views ─────────────────────────────────────────────────────────── */
 function setView(v) {
   view = v;
+  $('promptwrap').classList.add('hidden'); // never leave the add-bar overlay open across views
   for (const b of document.querySelectorAll('.navbtn'))
     b.classList.toggle('active', b.dataset.view === v && (v !== 'board' || project === 'inbox'));
   for (const s of document.querySelectorAll('.view')) s.classList.add('hidden');
@@ -1396,17 +1347,37 @@ document.addEventListener('keydown', (e) => {
   if (k === 'Escape') { handled(); return setView('board'); }
 });
 
-/* archive — grouped year / month / week, newest first, with unarchive */
+/* archive — grouped year / month / week, newest first, with unarchive.
+   Each heading is a collapsible group: click the heading to fold/unfold it. */
 async function renderArchive() {
   const { tasks } = await api('/api/archive');
   const list = $('archive-list');
   list.replaceChildren();
   let prev = {};
+  let yBody, mBody, wBody;
+
+  // a collapsible group: clickable heading + a body that holds its children
+  const group = (level, label) => {
+    const g = el('div', `arch-group arch-lvl${level}`);
+    const head = el('div', `arch-h${level} arch-head`, label);
+    head.prepend(el('span', 'arch-caret', '▾'));
+    const body = el('div', 'arch-body');
+    head.onclick = () => g.classList.toggle('collapsed');
+    g.append(head, body);
+    return { g, body };
+  };
+
   for (const t of tasks) {
     const s = t.sections;
-    if (s.year !== prev.year) list.append(el('div', 'arch-h1', s.year));
-    if (s.year !== prev.year || s.month !== prev.month) list.append(el('div', 'arch-h2', s.month));
-    if (s.year !== prev.year || s.month !== prev.month || s.week !== prev.week) list.append(el('div', 'arch-h3', s.week));
+    if (s.year !== prev.year) {
+      const grp = group(1, s.year); list.append(grp.g); yBody = grp.body;
+    }
+    if (s.year !== prev.year || s.month !== prev.month) {
+      const grp = group(2, s.month); yBody.append(grp.g); mBody = grp.body;
+    }
+    if (s.year !== prev.year || s.month !== prev.month || s.week !== prev.week) {
+      const grp = group(3, s.week); mBody.append(grp.g); wBody = grp.body;
+    }
     prev = s;
 
     const row = el('div', 'task done');
@@ -1417,7 +1388,7 @@ async function renderArchive() {
     row.append(title);
     if (t.doneDate) row.append(el('span', 'date', `✅ ${t.doneDate}`));
     row.append(un);
-    list.append(row);
+    wBody.append(row);
   }
   if (!tasks.length) list.append(el('div', 'dim', 'nothing archived yet'));
 }
@@ -2142,12 +2113,13 @@ notifyNativeTheme(); // match the app chrome to the theme the head script applie
    ↑/↓ move the selection, ⇧↑/↓ reorder the selected task, ⇧→/⇧← nest/un-nest
    it, backspace deletes it, enter/space toggles done, ⇧N jumps to the bar. */
 document.addEventListener('keydown', (e) => {
-  if (view !== 'board') return;
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return; // typing in a field
   const k = e.key;
+  // ⇧N opens the add-task bar from ANY view (it's a top-level overlay now)
+  if (e.shiftKey && (k === 'N' || k === 'n')) { e.preventDefault(); return openPrompt(); }
+  if (view !== 'board') return; // the rest of these only steer the board
   const cur = () => visibleTasks[sel];
 
-  if (e.shiftKey && (k === 'N' || k === 'n')) { e.preventDefault(); return $('prompt').focus(); }
   if (e.shiftKey && k === 'ArrowUp') { e.preventDefault(); return moveSelected(-1); }
   if (e.shiftKey && k === 'ArrowDown') { e.preventDefault(); return moveSelected(1); }
   if (e.shiftKey && k === 'ArrowRight') { e.preventDefault(); return indentSelected(1); }
