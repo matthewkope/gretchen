@@ -763,6 +763,7 @@ function kanCard(card, ci) {
     } else if (part) title.append(part);
   }
   if (card.priority) title.append(' ' + (S.priorities.find((p) => p.key === card.priority)?.emoji || ''));
+  title.onclick = (e) => { e.stopPropagation(); kanEditCard(ci, card, c); }; // click the words to edit
   c.append(title);
   const d = dateSpan(card);
   if (d) { const meta = el('div', 'kan-card-meta'); meta.append(d); c.append(meta); }
@@ -2120,9 +2121,10 @@ document.addEventListener('keydown', (e) => {
   const k = e.key;
   const cur = () => visibleTasks[sel];
 
-  // shift + ↑/↓ : move the selected item (with its sub-tasks) up or down the list
-  if (k === 'ArrowUp' && e.shiftKey) { e.preventDefault(); const t = cur(); if (t) { sel = Math.max(0, sel - 1); op('up', t.i); } return; }
-  if (k === 'ArrowDown' && e.shiftKey) { e.preventDefault(); const t = cur(); if (t) { sel = Math.min(visibleTasks.length - 1, sel + 1); op('down', t.i); } return; }
+  // shift + ↑/↓ : move the selected item (with its sub-tasks); the highlight
+  // stays on it the whole way — see moveSelected (optimistic local reorder)
+  if (k === 'ArrowUp' && e.shiftKey) { e.preventDefault(); moveSelected(-1); return; }
+  if (k === 'ArrowDown' && e.shiftKey) { e.preventDefault(); moveSelected(1); return; }
   // ⌘/ctrl + → / ← : nest the item into a sub-list (indent) or un-nest it (outdent)
   if (k === 'ArrowRight' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const t = cur(); if (t) op('indent', t.i); return; }
   if (k === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const t = cur(); if (t) op('outdent', t.i); return; }
@@ -2160,3 +2162,78 @@ function setupSectionCollapse(headId, key) {
 }
 setupSectionCollapse('projects-head', 'gretchen-collapse-projects');
 setupSectionCollapse('tags-head', 'gretchen-collapse-tags');
+
+/* ── shift+↑/↓ reorder: keep the highlight on the moved task ──────────────
+   Reorder S.tasks locally and re-render immediately so the selection follows
+   the task without waiting on the server (no lag, no desync on rapid presses).
+   The move is then persisted; server writes are chained so they can't race,
+   and we re-sync once the burst is idle. */
+function blockSwapMove(tasks, from, dir) {
+  const blocks = [];
+  for (let i = 0; i < tasks.length; ) {
+    let j = i + 1;
+    while (j < tasks.length && (tasks[j].indent || 0) > (tasks[i].indent || 0)) j++;
+    blocks.push(tasks.slice(i, j));
+    i = j;
+  }
+  const moved = tasks[from];
+  const bi = blocks.findIndex((b) => b.includes(moved));
+  const swap = bi + dir;
+  if (bi < 0 || swap < 0 || swap >= blocks.length) return null; // already at the edge
+  [blocks[bi], blocks[swap]] = [blocks[swap], blocks[bi]];
+  const next = blocks.flat();
+  return { tasks: next, index: next.indexOf(moved) };
+}
+
+let moveChain = Promise.resolve();
+let movePending = 0;
+function moveSelected(dir) {
+  if (tagFilter || !S || !visibleTasks.length) return; // reorder is off under a filter
+  const t = visibleTasks[sel];
+  if (!t) return;
+  const from = S.tasks.indexOf(t);
+  if (from < 0) return;
+  const res = blockSwapMove(S.tasks, from, dir);
+  if (!res) return;            // at the top/bottom already
+  S.tasks = res.tasks;         // optimistic local reorder
+  sel = res.index;             // the selection rides along with the task
+  renderBoard();               // instant: FLIP slides and the highlight follows
+  movePending++;
+  moveChain = moveChain
+    .then(() => api('/api/op', { op: dir < 0 ? 'up' : 'down', index: from, project }))
+    .then(() => { if (--movePending === 0) refresh(); },
+          () => { movePending = 0; refresh(); });
+}
+
+/* ── live re-sync ──────────────────────────────────────────────────────
+   The app only re-fetched on explicit actions, so changes made elsewhere
+   (the CLI, another tab) stayed stale until you navigated — e.g. a #tag that
+   lived only in a project wouldn't appear in the sidebar until you opened
+   that project. Poll while idle + visible (and on tab focus); re-render only
+   when something actually changed, so an unchanged board never churns. */
+let stateSig = null;
+function appBusy() {
+  const ae = document.activeElement;
+  if (ae && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName)) return true;
+  return editing != null || dragFrom != null || movePending > 0 || cmdPending;
+}
+async function pollSync() {
+  if (document.hidden || appBusy()) return;
+  let next;
+  try {
+    const res = await fetch(`/api/state?project=${encodeURIComponent(project)}`);
+    next = await res.json();
+  } catch { return; }
+  if (!next || next.error) return;
+  const sig = JSON.stringify([
+    next.tags, next.projects, next.stats, next.dashboard, next.tracking,
+    (next.tasks || []).map((t) => `${t.title}|${t.done}|${t.date || ''}|${t.indent || 0}`),
+  ]);
+  if (sig === stateSig || appBusy()) return; // unchanged, or the user started interacting
+  S = next;
+  stateSig = sig;
+  render();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSync(); });
+window.addEventListener('focus', pollSync);
+setInterval(pollSync, 4000);
