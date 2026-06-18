@@ -161,6 +161,13 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 .task .timer-btn.on { color: var(--accent); display: inline-block; }
 .task.tracking { background: var(--bg3); border-color: var(--accent); }
+/* a kanban card surfaced under a tag filter: a location pill + click to jump */
+.task.kanban-src { cursor: pointer; }
+.task.kanban-src:hover { border-color: var(--accent); }
+.kanban-badge {
+  flex: 0 0 auto; font-size: 12px; color: var(--dim);
+  background: var(--bg3); border-radius: 999px; padding: 1px 9px; white-space: nowrap;
+}
 
 /* drag-and-drop reordering */
 .task { cursor: grab; }
@@ -540,3 +547,11 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .side-head.collapsible:hover { font-weight: 700; color: var(--fg); }
 .side-section.collapsed #projects,
 .side-section.collapsed #tags { display: none; }
+
+/* ── inline task edit (double-click a bubble) ────────── */
+.task.editing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.task .task-edit {
+  flex: 1; min-width: 0; font: inherit; color: var(--fg);
+  background: var(--bg3); border: none; outline: none;
+  border-radius: 5px; padding: 4px 8px;
+}

@@ -96,8 +96,14 @@ function stateFor(project) {
   const tasks = loadTasks(project);
   const tagCounts = {};
   for (const t of loadAllTasks()) for (const g of getTags(t)) tagCounts[g] = (tagCounts[g] || 0) + 1;
-  // kanban-card tags count too, so they appear in the sidebar and filter
-  for (const c of loadBoard()) for (const card of c.cards) for (const g of getTags(card)) tagCounts[g] = (tagCounts[g] || 0) + 1;
+  // kanban-card tags count too, so they appear in the sidebar and filter; and
+  // each card is exposed (with its column) so a tag filter can list it
+  const kanbanCards = [];
+  loadBoard().forEach((c, ci) => c.cards.forEach((card, i) => {
+    const tags = getTags(card);
+    for (const g of tags) tagCounts[g] = (tagCounts[g] || 0) + 1;
+    kanbanCards.push({ ...card, tags, column: c.name, col: ci, i });
+  }));
   const archive = loadArchive();
   const all = [];
   for (const name of [null, ...listProjects()]) {
@@ -113,6 +119,7 @@ function stateFor(project) {
     ],
     tags: Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).map(([tag, count]) => ({ tag, count })),
     all, // every task across files, for the calendar
+    kanbanCards, // every kanban card with its column, so a tag filter can list them
     dates: dateSuggestions(),
     priorities: PRIORITIES,
     sortKeys: SORT_KEYS,

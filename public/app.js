@@ -223,7 +223,10 @@ function renderBoard() {
   const list = $('tasks');
   const visible = S.tasks.filter((t) => !tagFilter || t.tags.includes(tagFilter));
   visibleTasks = visible;
-  if (!visible.length) {
+  // under a tag filter, also list kanban cards carrying that tag — shown with
+  // the column they live in, click to jump to the board
+  const kanMatches = tagFilter ? (S.kanbanCards || []).filter((c) => (c.tags || []).includes(tagFilter)) : [];
+  if (!visible.length && !kanMatches.length) {
     list.replaceChildren(el('div', 'dim', 'no tasks — type below to add one'));
     return updateModeUI();
   }
@@ -235,9 +238,10 @@ function renderBoard() {
     if (child.dataset.flipkey != null) firstTops.set(child.dataset.flipkey, child.getBoundingClientRect().top);
 
   const rows = visible.map(renderTask);
-  if (mode !== 'add' && rows[sel]) rows[sel].classList.add('selected');
-  list.replaceChildren(...rows);
-  if (mode !== 'add' && rows[sel]) rows[sel].scrollIntoView({ block: 'nearest' });
+  // only :e (list) mode highlights a task row — not add or revise
+  if (mode === 'list' && rows[sel]) rows[sel].classList.add('selected');
+  list.replaceChildren(...rows, ...kanMatches.map(renderKanbanRow));
+  if (mode === 'list' && rows[sel]) rows[sel].scrollIntoView({ block: 'nearest' });
   flipSlide(list, firstTops); // step 2 — slide moved tasks from their old spot to the new one
   updateModeUI();
 }
@@ -268,6 +272,30 @@ function flipSlide(list, firstTops) {
 function prefersReducedMotion() {
   try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
   catch { return false; }
+}
+
+// a read-only row for a kanban card surfaced by a tag filter: shows the column
+// (location) it lives in, and jumps to the board when clicked
+function renderKanbanRow(card) {
+  const row = el('div', 'task kanban-src');
+  const loc = el('span', 'kanban-badge', `📊 ${card.column}`);
+  loc.title = 'on the kanban board';
+  const title = el('span', 'title');
+  for (const part of card.title.split(/(#[\w/-]+)/g)) {
+    if (part.startsWith('#')) {
+      const a = el('span', 'tag', part);
+      const c = tagColor(part);
+      if (c) a.style.color = c;
+      a.onclick = (e) => { e.stopPropagation(); tagFilter = tagFilter === part ? null : part; render(); };
+      title.append(a);
+    } else if (part) title.append(part);
+  }
+  if (card.priority) title.append(' ' + (S.priorities.find((p) => p.key === card.priority)?.emoji || ''));
+  row.append(loc, title);
+  const d = dateSpan(card);
+  if (d) row.append(d);
+  row.onclick = () => { setView('kanban'); render(); };
+  return row;
 }
 
 function renderTask(t) {
@@ -334,12 +362,21 @@ function renderTask(t) {
     });
   }
 
-  // double-click a task to revise its text in the bar
-  row.addEventListener('dblclick', (e) => {
-    if (e.target.closest('.tag, input, button, select')) return;
+  // single click selects the task — highlight in place (no rebuild) so the
+  // node stays put and the double-click below still fires
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('input, button, select, .tag')) return; // toggles/filters keep their behavior
     const i = visibleTasks.indexOf(t);
-    if (i >= 0) sel = i;
-    enterMode('revise');
+    if (i < 0) return;
+    sel = i;
+    if (mode === 'add') { mode = 'list'; $('prompt').blur(); updateModeUI(); }
+    for (const r of $('tasks').children) r.classList.remove('selected');
+    row.classList.add('selected');
+  });
+  // double click edits the task inline, right inside its bubble
+  row.addEventListener('dblclick', (e) => {
+    if (e.target.closest('input, button, select, .tag')) return;
+    startInlineEdit(row, t);
   });
   return row;
 }
@@ -378,6 +415,36 @@ function playRectFlip(map, dur = 180) {
 async function op(name, index, arg) {
   await api('/api/op', { op: name, index, project, arg });
   refresh();
+}
+
+// edit a task in place: the bubble's content becomes an input holding the
+// task text (title, priority emoji, 📅 date). Enter or click-away saves;
+// Escape (or emptying it) cancels. A focused input also pauses the live poll.
+function startInlineEdit(row, t) {
+  const emoji = t.priority ? ` ${S.priorities.find((p) => p.key === t.priority)?.emoji || ''}` : '';
+  const input = el('input', 'task-edit');
+  input.value = `${t.title}${emoji}${t.date ? ` 📅 ${t.date}` : ''}`;
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    if (!v) return renderBoard();
+    api('/api/op', { op: 'edit', index: t.i, project, arg: v }).then((out) => {
+      out && out.ok ? refresh() : renderBoard();
+    });
+  };
+  const cancel = () => { if (done) return; done = true; renderBoard(); };
+  input.onkeydown = (e) => {
+    e.stopPropagation(); // keep the board's global key handlers out
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  };
+  input.onblur = commit; // clicking away saves
+  row.classList.add('editing');
+  row.replaceChildren(input);
+  input.focus();
+  input.select();
 }
 
 // where the dragged task lands after a reorder — mirrors the server's reorder
@@ -2077,12 +2144,14 @@ function enterMode(m) {
     if (!t) { toast('no task selected — :e then ↑/↓ to pick one'); return enterMode('list'); }
     mode = 'revise';
     beginEdit(t); // loads the task text into the bar and focuses it
+    if (view === 'board' && S) renderBoard(); // drop the list-mode highlight
     return updateModeUI();
   }
   if (m === 'add') {
     mode = 'add';
     if (editing != null) endEdit();
     $('prompt').focus();
+    if (view === 'board' && S) renderBoard(); // drop the list-mode highlight
     return updateModeUI();
   }
   // list
