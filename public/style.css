@@ -495,17 +495,15 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 }
 
 /* ── home view: today's wellness as cards ────────────── */
-/* Home content sits in a centered 720px column by default; the Home layout
-   setting can left-align it (`home-left` on :root). The banner stays full-bleed
-   either way. h1 + the widget column share margins so they line up. */
-#view-home > h1,
+/* The widget column sits in a centered 720px column by default; the Home layout
+   setting can left-align it (`home-left` on :root). The banner stays full-bleed,
+   and the "home" heading always stays at the left edge in either mode. */
 #home-body {
   width: 100%;
   max-width: 720px;
   margin-left: auto;
   margin-right: auto;
 }
-:root.home-left #view-home > h1,
 :root.home-left #home-body {
   margin-left: 0;
   margin-right: 0;
