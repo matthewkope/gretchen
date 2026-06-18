@@ -568,6 +568,14 @@ const routes = {
         board.splice(col, 1);
         break;
       }
+      case 'archive-column': {
+        if (!has(col, board.length)) return { error: 'stale — refresh' };
+        const n = board[col].cards.length;
+        for (const card of board[col].cards) archiveTask(card); // → ~/.gretchen/archive.md
+        board[col].cards = [];
+        saveBoard(board);
+        return { ok: true, count: n };
+      }
       case 'move-column': {
         const from = Number(b.from);
         if (!has(from, board.length)) return { error: 'stale — refresh' };

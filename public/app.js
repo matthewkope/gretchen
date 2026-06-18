@@ -9,10 +9,8 @@ let view = 'board';
 let calCursor = null;    // Date the calendar cursor is on
 let calMode = 'month';   // month | week | day
 let editing = null;      // task index loaded into the prompt
-let mode = 'add';        // vim-like mode: 'add' (:n) · 'list' (:e) · 'revise' (:r)
-let sel = 0;             // selected task in list/revise mode (index into visibleTasks)
+let sel = 0;             // selected task on the board (index into visibleTasks)
 let visibleTasks = [];   // tasks currently rendered on the board
-let cmdPending = false;  // a ':' was pressed; waiting for the n/e/r letter
 let sugSel = 0;          // selected row in the suggestion strip
 let suggestions = [];    // current strip items: { label, detail, apply }
 let dragFrom = null;     // file index of the task being dragged, or null
@@ -228,7 +226,7 @@ function renderBoard() {
   const kanMatches = tagFilter ? (S.kanbanCards || []).filter((c) => (c.tags || []).includes(tagFilter)) : [];
   if (!visible.length && !kanMatches.length) {
     list.replaceChildren(el('div', 'dim', 'no tasks — type below to add one'));
-    return updateModeUI();
+    return;
   }
   if (sel >= visible.length) sel = visible.length - 1;
   if (sel < 0) sel = 0;
@@ -238,12 +236,10 @@ function renderBoard() {
     if (child.dataset.flipkey != null) firstTops.set(child.dataset.flipkey, child.getBoundingClientRect().top);
 
   const rows = visible.map(renderTask);
-  // only :e (list) mode highlights a task row — not add or revise
-  if (mode === 'list' && rows[sel]) rows[sel].classList.add('selected');
+  if (rows[sel]) rows[sel].classList.add('selected');
   list.replaceChildren(...rows, ...kanMatches.map(renderKanbanRow));
-  if (mode === 'list' && rows[sel]) rows[sel].scrollIntoView({ block: 'nearest' });
+  if (rows[sel]) rows[sel].scrollIntoView({ block: 'nearest' });
   flipSlide(list, firstTops); // step 2 — slide moved tasks from their old spot to the new one
-  updateModeUI();
 }
 
 // FLIP "play": each row that changed position is inverted back to where it was,
@@ -311,17 +307,10 @@ function renderTask(t) {
   cb.onchange = () => { if (cb.checked) playClonk(); op('toggle', t.i); };
 
   const title = el('span', 'title');
-  // tags inside the title are clickable filters
-  for (const part of t.title.split(/(#[\w/-]+)/g)) {
-    if (part.startsWith('#')) {
-      const a = el('span', 'tag', part);
-      const c = tagColor(part);
-      if (c) a.style.color = c; // custom colour; otherwise the CSS default yellow
-      a.onclick = () => { tagFilter = tagFilter === part ? null : part; render(); };
-      title.append(a);
-    } else title.append(part);
-  }
-  if (t.priority) title.append(' ' + (S.priorities.find((p) => p.key === t.priority)?.emoji || ''));
+  // the title shows just the words; #tags move to bubbles in the meta row
+  title.append(
+    t.title.split(/(#[\w/-]+)/g).filter((p) => !p.startsWith('#')).join('').replace(/\s{2,}/g, ' ').trim()
+  );
 
   const isTracking = S.tracking && S.tracking.title === t.title;
   if (isTracking) row.classList.add('tracking');
@@ -330,8 +319,19 @@ function renderTask(t) {
   timer.onclick = () => (isTracking ? stopTimer() : startTimer(t));
 
   row.append(cb, timer, title);
+  // right-side meta, left → right: tag bubbles · priority · date
+  const meta = el('span', 'task-meta');
+  for (const tg of t.tags || []) {
+    const b = el('span', 'tag', tg);
+    const c = tagColor(tg);
+    if (c) b.style.color = c; // custom colour; otherwise the CSS default yellow
+    b.onclick = () => { tagFilter = tagFilter === tg ? null : tg; render(); };
+    meta.append(b);
+  }
+  if (t.priority) meta.append(el('span', 'task-prio', S.priorities.find((p) => p.key === t.priority)?.emoji || ''));
   const d = dateSpan(t);
-  if (d) row.append(d);
+  if (d) meta.append(d);
+  if (meta.childElementCount) row.append(meta);
 
   // Live drag-and-drop reorder: while a row is dragged, the others slide out of
   // the way in real time (see the #tasks dragover handler), and the new order
@@ -369,7 +369,7 @@ function renderTask(t) {
     const i = visibleTasks.indexOf(t);
     if (i < 0) return;
     sel = i;
-    if (mode === 'add') { mode = 'list'; $('prompt').blur(); updateModeUI(); }
+    $('prompt').blur(); // leave the add-bar so ↑/↓ navigate the list
     for (const r of $('tasks').children) r.classList.remove('selected');
     row.classList.add('selected');
   });
@@ -473,10 +473,11 @@ function beginEdit(t) {
   $('hint').textContent = 'editing — enter saves · esc cancels';
 }
 
+const HINT_TEXT = '↑/↓ select · ⇧↑/↓ move · ⇧←/→ nest · ⌫ delete · enter done · ⇧N add · / commands';
 function endEdit() {
   editing = null;
   $('prompt').value = '';
-  $('hint').textContent = 'enter adds · dates like “due friday” / “@today” become 📅 · # tags · / commands';
+  $('hint').textContent = HINT_TEXT;
   updateSuggestions();
 }
 
@@ -516,6 +517,11 @@ function updateSuggestions() {
     sugSel = 0; // fresh context (e.g. the priority list after a date) starts at the top
     updateSuggestions();
   };
+  // matches a finished "...📅 DATE <priority-emoji> " — the moment to offer tags
+  const prioEmojis = (S.priorities || []).map((p) => p.emoji).filter(Boolean);
+  const prioDone = prioEmojis.length
+    ? new RegExp(`📅 \\d{4}-\\d{2}-\\d{2} (?:${prioEmojis.join('|')}) $`, 'u')
+    : null;
 
   if (v.startsWith('/')) {
     const q = v.slice(1).split(/\s/)[0].toLowerCase();
@@ -553,6 +559,13 @@ function updateSuggestions() {
         apply: insert(/([a-z]*)$/i, p.emoji ? `${p.emoji} ` : ''),
         enterInserts: !!p.emoji, // enter sets a real priority; enter on "none" submits the task
       }));
+  } else if (prioDone && prioDone.test(v)) {
+    // due + priority are set — now pick a #tag, or "no tag" to finish
+    suggestions = [
+      { label: '· no tag', detail: 'add the task as is', apply: () => submitPrompt() },
+      ...S.tags.map((t) => ({ label: t.tag, detail: `${t.count} task${t.count === 1 ? '' : 's'}`,
+        apply: insert(/\s*$/, ` ${t.tag} `), enterInserts: true })),
+    ];
   } else if (DATE_CTX.test(v) || DUE_PREFIX.test(v)) {
     // "@x" / "due x" filter by the partial; a bare "du"/"due" shows them all
     const m = v.match(DATE_CTX);
@@ -565,12 +578,16 @@ function updateSuggestions() {
 
   sugSel = Math.min(sugSel, Math.max(0, suggestions.length - 1));
   box.classList.toggle('hidden', !suggestions.length);
+  let selRow = null;
   box.replaceChildren(...suggestions.map((s, i) => {
     const row = el('div', `sug${i === sugSel ? ' sel' : ''}`);
+    if (i === sugSel) selRow = row;
     row.append(el('span', 'lab', s.label), el('span', 'det', s.detail || ''));
     row.onclick = s.apply;
     return row;
   }));
+  // keep the highlighted command visible as you arrow past the box's max-height
+  selRow?.scrollIntoView({ block: 'nearest' });
 }
 
 async function runCommand(raw) {
@@ -631,14 +648,18 @@ $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowUp' && suggestions.length) { e.preventDefault(); sugSel = (sugSel - 1 + suggestions.length) % suggestions.length; return updateSuggestions(); }
   if (e.key === 'ArrowDown' && suggestions.length) { e.preventDefault(); sugSel = (sugSel + 1) % suggestions.length; return updateSuggestions(); }
   if (e.key === 'Tab' && suggestions.length) { e.preventDefault(); return suggestions[sugSel].apply(); }
-  if (e.key === 'Escape') { e.preventDefault(); return enterMode('list'); }
-  if (e.key === ':' && p.value === '' && editing == null && !suggestions.length) { e.preventDefault(); return startCmd(); }
+  if (e.key === 'Escape') { e.preventDefault(); endEdit(); $('prompt').blur(); return; }
   // enter on a date (or a real priority) populates it and moves to the next
   // prompt instead of submitting; enter on "none"/no suggestion submits
   if (e.key === 'Enter' && suggestions[sugSel]?.enterInserts) { e.preventDefault(); return suggestions[sugSel].apply(); }
   if (e.key !== 'Enter') return;
   e.preventDefault();
+  submitPrompt();
+});
 
+// add (or save) the task in the prompt; shared by Enter and the "no tag" pick
+function submitPrompt() {
+  const p = $('prompt');
   const v = p.value.trim();
   if (!v) return;
   if (v.startsWith('/')) {
@@ -646,17 +667,12 @@ $('prompt').addEventListener('keydown', (e) => {
     updateSuggestions();
     return runCommand(v);
   }
-  const wasEdit = editing != null;
-  const revising = wasEdit && mode === 'revise';
-  const submit = wasEdit
+  const submit = editing != null
     ? api('/api/op', { op: 'edit', index: editing, project, arg: v })
     : api('/api/input', { text: v, project });
   endEdit();
-  submit.then(() => {
-    if (revising) { mode = 'list'; $('prompt').blur(); }
-    refresh();
-  });
-});
+  submit.then(() => refresh());
+}
 
 $('prompt').addEventListener('input', () => {
   const p = $('prompt');
@@ -1059,7 +1075,18 @@ function kanColMenu(ci, col, anchor) {
     const out = await api('/api/kanban', { action: 'delete-column', col: ci, force: true });
     if (out.ok) refresh();
   };
-  m.append(rename, del);
+  m.append(rename);
+  // archive every card in this list into ~/.gretchen/archive.md (handy for Done)
+  if (col.cards.length) {
+    const arch = el('button', '', `Archive cards (${col.cards.length})`);
+    arch.onclick = async () => {
+      closeKanMenus();
+      const out = await api('/api/kanban', { action: 'archive-column', col: ci });
+      if (out.ok) { toast(`archived ${out.count} card${out.count === 1 ? '' : 's'}`); refresh(); }
+    };
+    m.append(arch);
+  }
+  m.append(del);
   anchor.closest('.kan-col-head').append(m);
   setTimeout(() => document.addEventListener('click', closeKanMenus, { once: true }), 0);
 }
@@ -1101,8 +1128,7 @@ function setView(v) {
   if (v === 'kanban') renderKanban();
   if (v === 'time') renderTime();
   if (v === 'settings') renderSettings();
-  if (v === 'board') $('prompt').focus();
-  else document.activeElement?.blur(); // so calendar keys aren't eaten by a focused button
+  document.activeElement?.blur(); // no field focused, so board ↑/↓ and view keys work
 }
 
 document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => {
@@ -1738,27 +1764,22 @@ function setTagColor(tag, hex) {
 }
 
 const KEY_HELP = [
-  { group: 'Command mode (press “:” on an empty bar, then a letter)', rows: [
-    { keys: [':n'], desc: 'add mode — type a new task' },
-    { keys: [':e'], desc: 'list mode — browse & act on tasks' },
-    { keys: [':r'], desc: 'revise the selected task in the bar' },
-  ] },
-  { group: 'List mode (:e)', rows: [
-    { keys: ['j', 'k'], desc: 'select down / up (or ↓ / ↑)' },
-    { keys: ['⇧↓', '⇧↑'], desc: 'move the task, with its sub-tasks' },
-    { keys: ['⌘→', '⌘←'], desc: 'nest / un-nest (also Tab / ⇧Tab)' },
+  { group: 'Inbox & project boards', rows: [
+    { keys: ['↑', '↓'], desc: 'select a task' },
+    { keys: ['⇧↑', '⇧↓'], desc: 'move the task (with its sub-tasks)' },
+    { keys: ['⇧→', '⇧←'], desc: 'nest / un-nest as a sub-task' },
     { keys: ['Enter', 'Space'], desc: 'toggle done' },
-    { keys: ['r'], desc: 'revise the selected task' },
-    { keys: ['i', 'a', 'n'], desc: 'switch to add mode' },
-    { keys: ['x', '⌫'], desc: 'archive the task' },
-    { keys: [':'], desc: 'start a command (n / e / r)' },
+    { keys: ['⌫', 'Del'], desc: 'delete the selected task' },
+    { keys: ['⇧N'], desc: 'jump to the add-task bar' },
+    { keys: ['click'], desc: 'select · double-click edits in place' },
+    { keys: ['drag'], desc: 'reorder a task and its sub-tasks' },
   ] },
-  { group: 'Add mode (:n)', rows: [
-    { keys: ['Enter'], desc: 'add the typed task, or save an edit' },
+  { group: 'Add-task bar', rows: [
+    { keys: ['Enter'], desc: 'add the typed task' },
     { keys: ['↑', '↓'], desc: 'move through the suggestion menu' },
     { keys: ['Tab'], desc: 'insert the highlighted suggestion' },
-    { keys: ['Esc'], desc: 'cancel an edit / clear the prompt' },
-    { keys: ['drag'], desc: 'reorder a task and its sub-tasks' },
+    { keys: ['Esc'], desc: 'clear and leave the bar' },
+    { keys: ['/'], desc: 'run a command (/cal, /sort, …)' },
   ] },
   { group: 'Calendar', rows: [
     { keys: ['m', 'w', 'd'], desc: 'month / week / day view' },
@@ -2096,7 +2117,7 @@ async function calendarAction(body, okMsg) {
   if (out.ok) { toast(okMsg); refresh(); }
 }
 
-refresh().then(() => $('prompt').focus());
+refresh();
 
 /* ── collapsible sidebar ───────────────────────────────────────────── */
 function setSidebarCollapsed(collapsed) {
@@ -2116,105 +2137,46 @@ try { if (localStorage.getItem('gretchen-sidebar-collapsed') === '1') setSidebar
 window.gretchenToggleSidebar = () => setSidebarCollapsed(!$('app').classList.contains('sidebar-collapsed'));
 notifyNativeTheme(); // match the app chrome to the theme the head script applied
 
-/* ── vim-like modes: :n add · :e list · :r revise ──────────────────────
-   ADD keeps the cursor in the add-a-task bar. LIST blurs it so ↑/↓ walk the
-   list and tab/⇧tab nest a task as a sub-task. REVISE loads the selected
-   task's text back into the bar to rewrite it. Press ':' (in list mode, or
-   on an empty bar) then n/e/r; Escape always drops to LIST. */
-function updateModeUI() {
-  const badge = $('mode-badge');
-  if (badge) {
-    badge.textContent = mode === 'add' ? 'ADD :n' : mode === 'list' ? 'LIST :e' : 'REVISE :r';
-    badge.className = `mode-badge mode-${mode}`;
-  }
-  const hint = $('hint');
-  if (hint && view === 'board') {
-    hint.textContent =
-      mode === 'list'
-        ? '↑/↓ select · ⇧↑/↓ move · ⌘←/→ sub-task · enter done · :n add · :r revise'
-        : mode === 'revise'
-        ? 'revising the task — enter saves · esc cancels'
-        : 'enter adds · “:” then e for list mode · “due friday”/“@today” → 📅 · # tags · / commands';
-  }
-}
-
-function enterMode(m) {
-  if (m === 'revise') {
-    const t = visibleTasks[sel];
-    if (!t) { toast('no task selected — :e then ↑/↓ to pick one'); return enterMode('list'); }
-    mode = 'revise';
-    beginEdit(t); // loads the task text into the bar and focuses it
-    if (view === 'board' && S) renderBoard(); // drop the list-mode highlight
-    return updateModeUI();
-  }
-  if (m === 'add') {
-    mode = 'add';
-    if (editing != null) endEdit();
-    $('prompt').focus();
-    if (view === 'board' && S) renderBoard(); // drop the list-mode highlight
-    return updateModeUI();
-  }
-  // list
-  mode = 'list';
-  if (editing != null) endEdit();
-  $('prompt').blur();
-  if (view === 'board' && S) renderBoard();
-  updateModeUI();
-}
-
-function startCmd() {
-  cmdPending = true;
-  const cl = $('cmdline');
-  if (cl) { cl.textContent = ':  n → add · e → list · r → revise'; cl.classList.remove('hidden'); }
-}
-function endCmd() {
-  cmdPending = false;
-  const cl = $('cmdline');
-  if (cl) cl.classList.add('hidden');
-}
-
-// capture the letter after ':' before any focused field can swallow it
+/* ── board keyboard control (no modes) ─────────────────────────────────
+   The inbox / project board is navigable whenever the add-bar isn't focused:
+   ↑/↓ move the selection, ⇧↑/↓ reorder the selected task, ⇧→/⇧← nest/un-nest
+   it, backspace deletes it, enter/space toggles done, ⇧N jumps to the bar. */
 document.addEventListener('keydown', (e) => {
-  if (!cmdPending) return;
-  e.preventDefault();
-  e.stopPropagation();
-  endCmd();
-  const k = e.key.toLowerCase();
-  if (k === 'n') enterMode('add');
-  else if (k === 'e') enterMode('list');
-  else if (k === 'r') enterMode('revise');
-  // Escape or anything else cancels
-}, true);
-
-// LIST-mode keys — only on the board, and only when not typing in a field
-document.addEventListener('keydown', (e) => {
-  if (view !== 'board' || cmdPending) return;
-  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (view !== 'board') return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return; // typing in a field
   const k = e.key;
   const cur = () => visibleTasks[sel];
 
-  // shift + ↑/↓ : move the selected item (with its sub-tasks); the highlight
-  // stays on it the whole way — see moveSelected (optimistic local reorder)
-  if (k === 'ArrowUp' && e.shiftKey) { e.preventDefault(); moveSelected(-1); return; }
-  if (k === 'ArrowDown' && e.shiftKey) { e.preventDefault(); moveSelected(1); return; }
-  // ⌘/ctrl + → / ← : nest the item into a sub-list (indent) or un-nest it (outdent)
-  if (k === 'ArrowRight' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const t = cur(); if (t) op('indent', t.i); return; }
-  if (k === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const t = cur(); if (t) op('outdent', t.i); return; }
-
-  if (k === ':') { e.preventDefault(); return startCmd(); }
-  if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); sel = Math.min(visibleTasks.length - 1, sel + 1); return renderBoard(); }
-  if (k === 'ArrowUp' || k === 'k') { e.preventDefault(); sel = Math.max(0, sel - 1); return renderBoard(); }
-  if (k === 'Tab') { e.preventDefault(); const t = cur(); if (t) op(e.shiftKey ? 'outdent' : 'indent', t.i); return; }
+  if (e.shiftKey && (k === 'N' || k === 'n')) { e.preventDefault(); return $('prompt').focus(); }
+  if (e.shiftKey && k === 'ArrowUp') { e.preventDefault(); return moveSelected(-1); }
+  if (e.shiftKey && k === 'ArrowDown') { e.preventDefault(); return moveSelected(1); }
+  if (e.shiftKey && k === 'ArrowRight') { e.preventDefault(); return indentSelected(1); }
+  if (e.shiftKey && k === 'ArrowLeft') { e.preventDefault(); return indentSelected(-1); }
+  if (k === 'ArrowDown') { e.preventDefault(); sel = Math.min(visibleTasks.length - 1, sel + 1); return renderBoard(); }
+  if (k === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); return renderBoard(); }
+  if (k === 'Backspace' || k === 'Delete') { e.preventDefault(); const t = cur(); if (t) op('delete', t.i); return; }
   if (k === 'Enter' || k === ' ') { e.preventDefault(); const t = cur(); if (t) { if (!t.done) playClonk(); op('toggle', t.i); } return; }
-  if (k === 'r') { e.preventDefault(); return enterMode('revise'); }
-  if (k === 'i' || k === 'n' || k === 'a') { e.preventDefault(); return enterMode('add'); }
-  if (k === 'x' || k === 'Backspace') { e.preventDefault(); const t = cur(); if (t) op('archive', t.i); return; }
 });
 
-// focusing the add bar is ADD mode (so clicking it leaves LIST)
-$('prompt').addEventListener('focus', () => {
-  if (mode === 'list') { mode = 'add'; updateModeUI(); if (view === 'board' && S) renderBoard(); }
-});
+// ⇧→ / ⇧← : nest / un-nest the selected task, keeping the highlight on it
+function indentSelected(dir) {
+  if (tagFilter || !S || !visibleTasks.length) return;
+  const t = visibleTasks[sel];
+  if (!t) return;
+  const i = S.tasks.indexOf(t);
+  if (i < 0) return;
+  const cur = t.indent || 0;
+  const next = dir > 0
+    ? (i === 0 ? cur : Math.min((S.tasks[i - 1].indent || 0) + 1, cur + 1))
+    : Math.max(0, cur - 1);
+  if (next === cur) return;
+  t.indent = next; // optimistic — the bubble shifts immediately
+  renderBoard();
+  movePending++;
+  moveChain = moveChain
+    .then(() => api('/api/op', { op: dir > 0 ? 'indent' : 'outdent', index: i, project }))
+    .then(() => { if (--movePending === 0) refresh(); }, () => { movePending = 0; refresh(); });
+}
 
 /* ── collapsible sidebar sections: click a heading to fold its list ──── */
 function setupSectionCollapse(headId, key) {
@@ -2287,7 +2249,7 @@ let stateSig = null;
 function appBusy() {
   const ae = document.activeElement;
   if (ae && ['INPUT', 'SELECT', 'TEXTAREA'].includes(ae.tagName)) return true;
-  return editing != null || dragFrom != null || movePending > 0 || cmdPending;
+  return editing != null || dragFrom != null || movePending > 0;
 }
 async function pollSync() {
   if (document.hidden || appBusy()) return;

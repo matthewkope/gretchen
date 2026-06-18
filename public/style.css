@@ -61,7 +61,8 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 /* ── sidebar ─────────────────────────────────────────── */
 #sidebar {
   width: 220px;
-  min-width: 220px;
+  flex: 0 0 auto; /* fixed width, no flex-shrink — replaces min-width so collapse
+                     can animate `width` cleanly without an expand-time clamp */
   border-right: 1px solid var(--border);
   background: var(--bg2);
   padding: 14px 12px;
@@ -69,13 +70,11 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   display: flex;
   flex-direction: column;
   gap: 16px;
-  /* collapse animates either width (→ icon rail, default) or margin-left
-     (→ slide away, deprecated) — see the .sidebar-collapsed rules below */
-  transition: margin-left .24s cubic-bezier(.4, 0, .2, 1),
-    width .24s cubic-bezier(.4, 0, .2, 1),
-    min-width .24s cubic-bezier(.4, 0, .2, 1),
-    padding .24s cubic-bezier(.4, 0, .2, 1),
-    opacity .2s ease;
+  /* collapse animates only width (→ icon rail) or margin-left (→ slide away);
+     padding/min-width are no longer animated, so each frame reflows less */
+  transition: width .18s cubic-bezier(.4, 0, .2, 1),
+    margin-left .18s cubic-bezier(.4, 0, .2, 1),
+    opacity .16s ease;
 }
 .brand { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
 .spark { color: var(--accent); }
@@ -150,7 +149,14 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 :root.checkbox-square .task input[type="checkbox"]::after { content: none; }
 .task .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task.done .title { color: var(--dim); text-decoration: line-through; }
-.task .tag { color: var(--yellow); cursor: pointer; }
+/* right-side meta, left → right: tag bubbles · priority · date */
+.task-meta { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.task-prio { font-size: 13px; line-height: 1; }
+/* tags as kanban-style bubbles (same format as .kan-card-title .tag) */
+.task .tag {
+  display: inline-block; color: var(--yellow); cursor: pointer;
+  background: var(--bg3); border-radius: 999px; padding: 0 7px; font-size: 11px; line-height: 1.5;
+}
 .task .date { color: var(--green); white-space: nowrap; }
 .task .date.overdue { color: var(--red); }
 .task .date.today { color: var(--yellow); }
@@ -516,7 +522,7 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
    everything else hides); no top-bar needed, the rail's own toggle expands */
 :root:not(.collapse-hide) #app.sidebar-collapsed #topbar { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed #sidebar {
-  width: 42px; min-width: 42px; padding: 14px 4px; gap: 10px;
+  width: 42px; padding: 14px 4px; gap: 10px;
 }
 :root:not(.collapse-hide) #app.sidebar-collapsed #sidebar > :not(.brand):not(#nav-views) { display: none; }
 :root:not(.collapse-hide) #app.sidebar-collapsed .brand { justify-content: center; }
