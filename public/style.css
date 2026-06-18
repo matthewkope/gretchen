@@ -10,6 +10,11 @@
   --yellow: #d4a94f;
   --red: #d4766c;
   --border: #3a362f;
+  /* GitHub-style contribution greens (dark) */
+  --cg1: #0e4429;
+  --cg2: #006d32;
+  --cg3: #26a641;
+  --cg4: #39d353;
   --font-ui: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -31,6 +36,11 @@
   --yellow: #a8801f;
   --red: #bd463c;
   --border: #d8d2c4;
+  /* GitHub-style contribution greens (light) */
+  --cg1: #9be9a8;
+  --cg2: #40c463;
+  --cg3: #30a14e;
+  --cg4: #216e39;
 }
 
 * { box-sizing: border-box; }
@@ -506,16 +516,35 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .cweek { display: flex; flex-direction: column; gap: 3px; }
 .cday { width: 11px; height: 11px; border-radius: 2px; background: var(--bg3); }
 .cday[data-level="0"] { background: var(--bg3); }
-.cday[data-level="1"] { background: color-mix(in srgb, var(--accent) 28%, var(--bg3)); }
-.cday[data-level="2"] { background: color-mix(in srgb, var(--accent) 52%, var(--bg3)); }
-.cday[data-level="3"] { background: color-mix(in srgb, var(--accent) 76%, var(--bg3)); }
-.cday[data-level="4"] { background: var(--accent); }
+.cday[data-level="1"] { background: var(--cg1); }
+.cday[data-level="2"] { background: var(--cg2); }
+.cday[data-level="3"] { background: var(--cg3); }
+.cday[data-level="4"] { background: var(--cg4); }
 .cday[data-level="empty"] { background: transparent; }
+.cday.chot { cursor: pointer; }
+.cday.chot:hover { outline: 1px solid var(--fg); outline-offset: -1px; }
 .clegend {
   display: flex; justify-content: space-between; align-items: center;
   gap: 12px; margin-top: 8px; font-size: 11px; flex-wrap: wrap;
 }
 .cleg-scale { display: flex; align-items: center; gap: 3px; }
+
+/* cursor-following tooltip for the grid (GitHub-style) */
+.ctip {
+  position: fixed; z-index: 100; transform: translate(-50%, -100%);
+  background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
+  padding: 4px 8px; border-radius: 6px; font-size: 11px; white-space: nowrap;
+  pointer-events: none;
+}
+
+/* archive day flash when arriving from a grid-square click */
+.task.arch-flash {
+  animation: archFlash 1.8s ease;
+}
+@keyframes archFlash {
+  0%, 30% { background: color-mix(in srgb, var(--accent) 35%, var(--bg2)); border-color: var(--accent); }
+  100% { background: var(--bg2); border-color: var(--border); }
+}
 
 /* ── settings ────────────────────────────────────────── */
 #settings-body { display: flex; flex-direction: column; gap: 22px; max-width: 640px; }

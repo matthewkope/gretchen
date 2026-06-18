@@ -683,9 +683,11 @@ function submitPrompt() {
     closePrompt();
     return runCommand(v);
   }
-  const submit = editing != null
-    ? api('/api/op', { op: 'edit', index: editing, project, arg: v })
-    : api('/api/input', { text: v, project });
+  let submit;
+  if (editing != null) submit = api('/api/op', { op: 'edit', index: editing, project, arg: v });
+  // ⇧N inside the kanban view drops the card into the leftmost list, not the inbox
+  else if (view === 'kanban' && kanban?.columns?.length) submit = api('/api/kanban', { action: 'add-card', col: 0, text: v });
+  else submit = api('/api/input', { text: v, project });
   endEdit();
   submit.then(() => refresh());
 }
@@ -938,9 +940,10 @@ async function kanMoveColumn(from, to) {
 // threshold means a plain click/double-click (rename) still works on the header.
 function kanColDragStart(e, colEl, ci, head) {
   if (e.button !== 0 || e.target.closest('button, input')) return; // chevron/menu/rename
+  e.preventDefault(); // don't begin a text selection while dragging the header
   const board = $('kanban-board');
   const startX = e.clientX, startY = e.clientY;
-  let lifted = false, ph = null, offX = 0, offY = 0;
+  let lifted = false, ph = null, offX = 0, offY = 0, lastX = startX;
 
   const lift = () => {
     lifted = true;
@@ -956,6 +959,7 @@ function kanColDragStart(e, colEl, ci, head) {
       margin: '0', zIndex: '1000', pointerEvents: 'none',
     });
     document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none'; // WebKit (the Mac app) needs the prefix
     document.body.style.cursor = 'grabbing';
   };
   const follow = (x, y) => {
@@ -968,10 +972,15 @@ function kanColDragStart(e, colEl, ci, head) {
       lift();
     }
     follow(ev.clientX, ev.clientY);
-    // slot the placeholder before the first list whose midpoint is right of the cursor
+    // swap based on the carried lane's own centre (not the cursor, so it's the same
+    // wherever you grab it), nudged in the direction of travel so the swap fires a
+    // bit before the lane is fully half over a neighbour
+    const dir = ev.clientX - lastX; lastX = ev.clientX;
+    const dragRect = colEl.getBoundingClientRect();
+    const probe = dragRect.left + dragRect.width / 2 + (dir >= 0 ? 1 : -1) * dragRect.width * 0.2;
     const others = [...board.children].filter((c) => c.classList.contains('kan-col') && c !== colEl);
     let ref = null;
-    for (const c of others) { const b = c.getBoundingClientRect(); if (ev.clientX < b.left + b.width / 2) { ref = c; break; } }
+    for (const c of others) { const b = c.getBoundingClientRect(); if (probe < b.left + b.width / 2) { ref = c; break; } }
     if (ref == null) ref = board.querySelector('.kan-addcol'); // stay left of "+ Add list"
     if (ph.nextElementSibling === ref) return;
     const first = captureKanRects('#kanban-board .kan-col', colEl); // measure before moving the gap
@@ -984,6 +993,7 @@ function kanColDragStart(e, colEl, ci, head) {
     document.removeEventListener('mouseup', onUp);
     if (!lifted) return; // it was just a click
     document.body.style.userSelect = '';
+    document.body.style.webkitUserSelect = '';
     document.body.style.cursor = '';
     // commit where the placeholder landed — skip the lifted list itself, which is
     // still sitting at its old spot in the DOM (it's only out of flow visually)
@@ -1448,7 +1458,7 @@ document.addEventListener('keydown', (e) => {
 
 /* archive — grouped year / month / week, newest first, with unarchive.
    Each heading is a collapsible group: click the heading to fold/unfold it. */
-async function renderArchive() {
+async function renderArchive(focusDate) {
   const { tasks } = await api('/api/archive');
   const list = $('archive-list');
   list.replaceChildren();
@@ -1480,6 +1490,7 @@ async function renderArchive() {
     prev = s;
 
     const row = el('div', 'task done');
+    if (t.doneDate) row.dataset.done = t.doneDate;
     const title = el('span', 'title', `✓ ${t.title}`);
     const un = el('button', '', '↩ unarchive');
     un.title = 'restore to the inbox as an open task';
@@ -1490,6 +1501,22 @@ async function renderArchive() {
     wBody.append(row);
   }
   if (!tasks.length) list.append(el('div', 'dim', 'nothing archived yet'));
+
+  // came from a contribution-grid click: expand the day's groups, scroll, flash
+  if (focusDate) {
+    const rows = [...list.querySelectorAll(`.task[data-done="${focusDate}"]`)];
+    rows.forEach((r) => {
+      for (let g = r.closest('.arch-group'); g; g = g.parentElement.closest('.arch-group'))
+        g.classList.remove('collapsed');
+    });
+    if (rows[0]) {
+      rows[0].scrollIntoView({ block: 'center' });
+      rows.forEach((r) => {
+        r.classList.add('arch-flash');
+        setTimeout(() => r.classList.remove('arch-flash'), 1800);
+      });
+    }
+  }
 }
 
 /* time — summary, the CSV (newest first), Toggl import email */
@@ -1684,9 +1711,32 @@ function mkActivityCard() {
 }
 
 const ACT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const ACT_WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const actLevel = (n) => (n === 0 ? 0 : n <= 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4);
 const actFmt = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const actNiceDate = (ds) => {
+  const d = new Date(`${ds}T00:00:00`);
+  return `${ACT_WD[d.getDay()]}, ${ACT_MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+};
+
+// one shared, cursor-following tooltip for the contribution grid
+function actTooltip() {
+  let t = document.getElementById('ctip');
+  if (!t) {
+    t = el('div', 'ctip');
+    t.id = 'ctip';
+    t.style.display = 'none';
+    document.body.append(t);
+  }
+  return t;
+}
+
+// jump from a grid square to that day's completed tasks in the archive
+function gotoArchiveDay(date) {
+  setView('archive');
+  renderArchive(date);
+}
 
 async function fillActivity(card, wrap) {
   let data;
@@ -1749,7 +1799,9 @@ async function fillActivity(card, wrap) {
       const cell = el('span', 'cday');
       if (day) {
         cell.dataset.level = actLevel(day.n);
-        cell.title = `${day.n} task${day.n === 1 ? '' : 's'} on ${day.ds}`;
+        cell.dataset.date = day.ds;
+        cell.dataset.count = day.n;
+        if (day.n > 0) cell.classList.add('chot'); // clickable → jump to that day
       } else {
         cell.dataset.level = 'empty';
       }
@@ -1757,6 +1809,24 @@ async function fillActivity(card, wrap) {
     }
     cols.append(col);
   }
+
+  // GitHub-style hover tooltip + click-through to that day in the archive
+  const tip = actTooltip();
+  cols.addEventListener('mousemove', (e) => {
+    const c = e.target.closest('.cday');
+    if (!c || !c.dataset.date) { tip.style.display = 'none'; return; }
+    const n = +c.dataset.count;
+    tip.textContent = `${n === 0 ? 'No tasks' : `${n} task${n === 1 ? '' : 's'}`} on ${actNiceDate(c.dataset.date)}`;
+    const r = c.getBoundingClientRect();
+    tip.style.display = 'block';
+    tip.style.left = `${r.left + r.width / 2}px`;
+    tip.style.top = `${r.top - 6}px`;
+  });
+  cols.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  cols.addEventListener('click', (e) => {
+    const c = e.target.closest('.cday');
+    if (c && +c.dataset.count > 0) { tip.style.display = 'none'; gotoArchiveDay(c.dataset.date); }
+  });
 
   const body = el('div', 'cbody');
   body.append(weekdays, cols);
