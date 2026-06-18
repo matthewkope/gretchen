@@ -243,7 +243,10 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .cal-day.out { opacity: 0.35; }
 .cal-day.today { border-color: var(--accent); }
 .cal-day.cursor { background: var(--bg3); box-shadow: inset 0 0 0 1px var(--accent); }
-#cal-grid.week { grid-auto-rows: 1fr; }
+/* week view has just two grid rows — the day-of-week headers and the day cells.
+   Size the header to its content and let the day cells take all remaining
+   height, so the columns reach the full height instead of stopping halfway. */
+#cal-grid.week { grid-template-rows: auto 1fr; }
 #cal-grid.day { display: block; }
 .cal-mode.active { color: var(--accent); border-color: var(--accent); }
 #cal-foot { margin-top: 8px; font-size: 12px; }
@@ -256,8 +259,12 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .day-task.overdue { color: var(--red); }
 .cal-day .n { color: var(--dim); }
 .cal-day.today .n { color: var(--accent); font-weight: 700; }
-.cal-task { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-task { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 4px; }
 .cal-task.done { color: var(--dim); text-decoration: line-through; }
+/* a task bubble / day-view row you can click to jump to where the task lives */
+.cal-task.clickable, .day-task.clickable { cursor: pointer; }
+.cal-task.clickable:hover { background: var(--bg3); color: var(--accent); }
+.day-task.clickable:hover { color: var(--accent); }
 /* read-only Apple Calendar events: a colour dot + dim title */
 .cal-ext { display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
 .cal-ext-t { overflow: hidden; text-overflow: ellipsis; color: var(--dim); }

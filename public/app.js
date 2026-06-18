@@ -1204,6 +1204,22 @@ function gotoView(v) {
 }
 document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => gotoView(b.dataset.view)));
 
+// open a task where it lives: switch to its project board, clear any tag
+// filter, then select and scroll to it. Calendar tasks (from S.all) don't carry
+// the board index, so match on title+date once the project's tasks load.
+function gotoTask(t) {
+  project = t.project || 'inbox';
+  tagFilter = null;
+  setView('board');
+  refresh().then(() => {
+    const idx = (S.tasks || []).findIndex((x) => x.title === t.title && x.date === t.date);
+    if (idx >= 0) {
+      sel = idx;
+      renderBoard(); // re-highlights and scrolls the selected row into view
+    }
+  });
+}
+
 // ── hotkeys (⌘H home, ⌘K kanban, ⌘I inbox, ⌘N add-task by default) ──────
 // Each action can be bound to a letter pressed with ⌘ — the page views plus
 // "add task" (which toggles the add bar). The map lives in localStorage so it's
@@ -1247,6 +1263,66 @@ document.addEventListener('keydown', (e) => {
       a.run();
       return;
     }
+  }
+}, true);
+
+// ── archive-task hotkey (⌥ Space by default) ───────────────────────────
+// Unlike the ⌘+letter page hotkeys, this one is a full chord (any modifiers +
+// any key, including Space), so it can be bound to Option+Space. It archives the
+// highlighted board task. Rebind it in Settings → Task actions; stored per browser.
+const DEFAULT_ARCHIVE_HOTKEY = { alt: true, ctrl: false, meta: false, shift: false, code: 'Space' };
+function loadArchiveHotkey() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('gretchen-archive-hotkey') || 'null');
+    if (raw && typeof raw === 'object') return raw; // {} means "cleared/disabled"
+  } catch {}
+  return { ...DEFAULT_ARCHIVE_HOTKEY };
+}
+let ARCHIVE_HOTKEY = loadArchiveHotkey();
+function saveArchiveHotkey(chord) {
+  ARCHIVE_HOTKEY = chord || {};
+  try { localStorage.setItem('gretchen-archive-hotkey', JSON.stringify(ARCHIVE_HOTKEY)); } catch {}
+}
+function chordMatches(e, c) {
+  if (!c || !c.code) return false;
+  return e.code === c.code && !!e.altKey === !!c.alt && !!e.ctrlKey === !!c.ctrl
+    && !!e.metaKey === !!c.meta && !!e.shiftKey === !!c.shift;
+}
+// e.code → a short label: KeyA→A, Digit1→1, Space→Space, plus a few named keys
+function codeLabel(code) {
+  if (!code) return '';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  const named = { Space: 'Space', Enter: 'Enter', Backspace: '⌫', Delete: 'Del', Tab: 'Tab',
+    ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Period: '.', Comma: ',',
+    Slash: '/', Backslash: '\\', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']',
+    Minus: '-', Equal: '=', Backquote: '`' };
+  return named[code] || code;
+}
+function chordLabel(c) {
+  if (!c || !c.code) return 'none';
+  const mods = [];
+  if (c.ctrl) mods.push('⌃');
+  if (c.alt) mods.push('⌥');
+  if (c.shift) mods.push('⇧');
+  if (c.meta) mods.push('⌘');
+  return [...mods, codeLabel(c.code)].join(' ');
+}
+// archive the highlighted task on the board (moves it to ~/.gretchen/archive.md)
+function archiveSelected() {
+  if (view !== 'board') return;
+  const t = visibleTasks[sel];
+  if (!t) return;
+  if (sel >= visibleTasks.length - 1) sel = Math.max(0, sel - 1); // keep a sensible highlight after the row leaves
+  op('archive', t.i);
+  toast('task archived');
+}
+document.addEventListener('keydown', (e) => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return; // not while typing
+  if (chordMatches(e, ARCHIVE_HOTKEY)) {
+    e.preventDefault();
+    e.stopPropagation();
+    archiveSelected();
   }
 }, true);
 
@@ -1350,8 +1426,9 @@ function calDayCell(d, { month, eventLimit }) {
   let shown = 0, hidden = 0;
   for (const t of tasks) {
     if (shown < eventLimit) {
-      const row = el('div', `cal-task${t.done ? ' done' : ''}`, `• ${t.title}`);
-      row.title = `${t.title} (${t.project})`;
+      const row = el('div', `cal-task clickable${t.done ? ' done' : ''}`, `• ${t.title}`);
+      row.title = `${t.title} (${t.project}) — click to open`;
+      row.onclick = (e) => { e.stopPropagation(); gotoTask(t); }; // jump to the task's board, not just the day
       cell.append(row);
       shown++;
     } else hidden++;
@@ -1453,7 +1530,10 @@ function renderCalendar() {
     if (!tasks.length && !evs.length) box.append(el('div', 'dim', 'Nothing on this day.'));
     for (const t of tasks) {
       const cls = t.done ? 'done' : !t.done && t.date < S.today ? 'overdue' : '';
-      box.append(el('div', `day-task ${cls}`, `${t.done ? '[x]' : '[ ]'} ${t.title}  (${t.project})`));
+      const row = el('div', `day-task clickable ${cls}`, `${t.done ? '[x]' : '[ ]'} ${t.title}  (${t.project})`);
+      row.title = 'click to open';
+      row.onclick = () => gotoTask(t);
+      box.append(row);
     }
     for (const e of evs) box.append(calExtRow(e, true));
     grid.append(box);
@@ -2741,6 +2821,9 @@ function renderSettings() {
   // ── page hotkeys ──
   body.append(settingsSection('Page hotkeys', renderHotkeySettings()));
 
+  // ── task action hotkeys (archive, …) ──
+  body.append(settingsSection('Task actions', renderTaskHotkeySettings()));
+
   // ── keyboard shortcuts ──
   const keysCard = el('div', 'set-card');
   for (const g of KEY_HELP) {
@@ -2796,6 +2879,37 @@ function renderHotkeySettings() {
   reset.onclick = () => { saveHotkeys({ ...DEFAULT_HOTKEYS }); renderSettings(); };
   card.append(reset);
   return card;
+}
+// Task-action hotkeys: full chords (modifiers + any key). Clicking the button
+// records the next combo you press — e.g. ⌥ Space. Saved in this browser.
+function renderTaskHotkeySettings() {
+  const card = el('div', 'set-card');
+  const row = el('div', 'set-row');
+  row.append(el('span', '', 'archive selected task'));
+  const btn = el('button', 'hotkey-btn', chordLabel(ARCHIVE_HOTKEY));
+  btn.onclick = () => captureChord(btn);
+  row.append(btn);
+  card.append(row);
+  card.append(el('div', 'dim', 'Click the key, then press your combo (e.g. ⌥ Space). Esc cancels · ⌫ clears. Archives the highlighted task on the inbox/project board.'));
+  const reset = el('button', '', 'Reset to default (⌥ Space)');
+  reset.onclick = () => { saveArchiveHotkey({ ...DEFAULT_ARCHIVE_HOTKEY }); renderSettings(); };
+  card.append(reset);
+  return card;
+}
+function captureChord(btn) {
+  btn.textContent = 'press a combo…';
+  btn.classList.add('capturing');
+  const onKey = (e) => {
+    if (['Meta', 'Shift', 'Control', 'Alt'].includes(e.key)) return; // wait for the real key
+    e.preventDefault();
+    e.stopPropagation();
+    document.removeEventListener('keydown', onKey, true);
+    if (e.key === 'Escape') return renderSettings(); // cancel, keep current
+    if (e.key === 'Backspace' || e.key === 'Delete') { saveArchiveHotkey({}); return renderSettings(); } // clear/disable
+    saveArchiveHotkey({ alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey, code: e.code });
+    renderSettings();
+  };
+  document.addEventListener('keydown', onKey, true);
 }
 function captureHotkey(btn, v) {
   btn.textContent = 'press a letter…';
