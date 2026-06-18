@@ -490,6 +490,33 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .home-big .ready-score { color: var(--green); }
 .home-card .well-tools { opacity: 1; margin-left: 0; margin-top: 4px; }
 
+/* ── home: tasks-completed contribution grid (GitHub-style) ── */
+.cactivity { max-width: 720px; margin-bottom: 16px; }
+.cwrap { overflow-x: auto; padding-bottom: 2px; }
+.ccal { display: inline-flex; flex-direction: column; gap: 4px; }
+.cmonths { display: flex; margin-left: 31px; height: 12px; }
+.cmonth {
+  width: 14px; flex: 0 0 14px; font-size: 10px; color: var(--dim);
+  white-space: nowrap; overflow: visible; line-height: 12px;
+}
+.cbody { display: flex; gap: 3px; }
+.cweekdays { display: flex; flex-direction: column; gap: 3px; width: 28px; flex: 0 0 28px; }
+.cwday { height: 11px; line-height: 11px; font-size: 9px; color: var(--dim); text-align: right; }
+.cweeks { display: flex; gap: 3px; }
+.cweek { display: flex; flex-direction: column; gap: 3px; }
+.cday { width: 11px; height: 11px; border-radius: 2px; background: var(--bg3); }
+.cday[data-level="0"] { background: var(--bg3); }
+.cday[data-level="1"] { background: color-mix(in srgb, var(--accent) 28%, var(--bg3)); }
+.cday[data-level="2"] { background: color-mix(in srgb, var(--accent) 52%, var(--bg3)); }
+.cday[data-level="3"] { background: color-mix(in srgb, var(--accent) 76%, var(--bg3)); }
+.cday[data-level="4"] { background: var(--accent); }
+.cday[data-level="empty"] { background: transparent; }
+.clegend {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-top: 8px; font-size: 11px; flex-wrap: wrap;
+}
+.cleg-scale { display: flex; align-items: center; gap: 3px; }
+
 /* ── settings ────────────────────────────────────────── */
 #settings-body { display: flex; flex-direction: column; gap: 22px; max-width: 640px; }
 .set-section { display: flex; flex-direction: column; gap: 8px; }

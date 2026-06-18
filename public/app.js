@@ -959,7 +959,7 @@ function kanColDragStart(e, colEl, ci, head) {
     document.body.style.cursor = 'grabbing';
   };
   const follow = (x, y) => {
-    colEl.style.transform = `translate(${x - offX}px, ${y - offY}px) rotate(2.5deg)`;
+    colEl.style.transform = `translate(${x - offX}px, ${y - offY}px)`;
   };
 
   const onMove = (ev) => {
@@ -1670,6 +1670,113 @@ function renderHome() {
   grid.append(sleepCard);
 
   box.append(grid);
+}
+
+/* GitHub-style contribution grid of tasks completed per day (last ~year).
+   Columns are weeks (Sun→Sat top→bottom); cell shade scales with the count. */
+function mkActivityCard() {
+  const card = el('div', 'home-card cactivity');
+  card.append(el('div', 'home-card-head', 'tasks completed'));
+  const wrap = el('div', 'cwrap');
+  card.append(wrap);
+  fillActivity(card, wrap); // async; fills once /api/activity returns
+  return card;
+}
+
+const ACT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const actLevel = (n) => (n === 0 ? 0 : n <= 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4);
+const actFmt = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function fillActivity(card, wrap) {
+  let data;
+  try {
+    data = await api('/api/activity');
+  } catch {
+    wrap.append(el('div', 'dim', 'could not load activity'));
+    return;
+  }
+  const counts = data.counts || {};
+  const end = new Date(`${data.today}T00:00:00`);
+  // start 52 weeks back, then rewind to that week's Sunday so columns align
+  const start = new Date(end);
+  start.setDate(start.getDate() - 52 * 7);
+  start.setDate(start.getDate() - start.getDay());
+
+  // build week columns
+  const weeks = [];
+  let total = 0;
+  const cur = new Date(start);
+  while (cur <= end) {
+    const week = [];
+    for (let i = 0; i < 7; i++) {
+      if (cur <= end) {
+        const ds = actFmt(cur);
+        const n = counts[ds] || 0;
+        total += n;
+        week.push({ ds, n });
+      } else {
+        week.push(null);
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    weeks.push(week);
+  }
+
+  // month labels: show a month name above the first week that lands in a new month
+  const months = el('div', 'cmonths');
+  let lastMonth = -1;
+  for (const week of weeks) {
+    const first = week.find(Boolean);
+    const m = first ? new Date(`${first.ds}T00:00:00`).getMonth() : -1;
+    const cell = el('span', 'cmonth');
+    if (m !== -1 && m !== lastMonth) {
+      cell.textContent = ACT_MONTHS[m];
+      lastMonth = m;
+    }
+    months.append(cell);
+  }
+
+  // weekday labels (Mon / Wed / Fri), aligned to rows
+  const weekdays = el('div', 'cweekdays');
+  ['', 'Mon', '', 'Wed', '', 'Fri', ''].forEach((lab) => weekdays.append(el('span', 'cwday', lab)));
+
+  // the grid of week columns
+  const cols = el('div', 'cweeks');
+  for (const week of weeks) {
+    const col = el('div', 'cweek');
+    for (const day of week) {
+      const cell = el('span', 'cday');
+      if (day) {
+        cell.dataset.level = actLevel(day.n);
+        cell.title = `${day.n} task${day.n === 1 ? '' : 's'} on ${day.ds}`;
+      } else {
+        cell.dataset.level = 'empty';
+      }
+      col.append(cell);
+    }
+    cols.append(col);
+  }
+
+  const body = el('div', 'cbody');
+  body.append(weekdays, cols);
+
+  // legend: total + Less ▢▢▢▢▢ More
+  const legend = el('div', 'clegend');
+  legend.append(el('span', 'cleg-total dim', `${total} completed in the last year`));
+  const scale = el('span', 'cleg-scale');
+  scale.append(el('span', 'dim', 'Less'));
+  for (let l = 0; l <= 4; l++) {
+    const sw = el('span', 'cday');
+    sw.dataset.level = l;
+    scale.append(sw);
+  }
+  scale.append(el('span', 'dim', 'More'));
+  legend.append(scale);
+
+  const cal = el('div', 'ccal');
+  cal.append(months, body);
+  wrap.replaceChildren(cal, legend);
 }
 
 function mkWellTool(label, tip, fn) {
