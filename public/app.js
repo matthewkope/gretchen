@@ -1191,14 +1191,59 @@ function setView(v) {
   document.activeElement?.blur(); // no field focused, so board ↑/↓ and view keys work
 }
 
-document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => {
-  if (b.dataset.view === 'board') { // the inbox entry: always the inbox list
+// switch to a view the way a sidebar click would (the inbox entry always
+// returns to the inbox list). Shared by the nav buttons and the page hotkeys.
+function gotoView(v) {
+  if (v === 'board') {
     project = 'inbox';
     tagFilter = null;
     setView('board');
     refresh();
-  } else setView(b.dataset.view);
-}));
+  } else setView(v);
+}
+document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => gotoView(b.dataset.view)));
+
+// ── per-page hotkeys (⌘H home, ⌘K kanban, ⌘I inbox by default) ──────────
+// Each page can be bound to a letter pressed with ⌘. The map lives in
+// localStorage so it's adjustable from Settings → Page hotkeys.
+const HOTKEY_VIEWS = [
+  { view: 'home', label: 'home' },
+  { view: 'board', label: 'inbox' },
+  { view: 'calendar', label: 'calendar' },
+  { view: 'kanban', label: 'kanban' },
+  { view: 'archive', label: 'archive' },
+  { view: 'time', label: 'time log' },
+  { view: 'settings', label: 'settings' },
+];
+const DEFAULT_HOTKEYS = { home: 'h', kanban: 'k', board: 'i' };
+function loadHotkeys() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('gretchen-hotkeys') || 'null');
+    if (raw && typeof raw === 'object') return raw;
+  } catch {}
+  return { ...DEFAULT_HOTKEYS };
+}
+let HOTKEYS = loadHotkeys();
+function saveHotkeys(map) {
+  HOTKEYS = map;
+  try { localStorage.setItem('gretchen-hotkeys', JSON.stringify(map)); } catch {}
+}
+
+// ⌘ + letter → jump to the bound page, from any view. Uses the capture phase so
+// it wins over view-local key handlers; preventDefault stops the browser default
+// (e.g. ⌘I). ⌘H is freed in the Mac app's menu so it reaches here too.
+document.addEventListener('keydown', (e) => {
+  if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  const key = (e.key || '').toLowerCase();
+  if (key.length !== 1) return;
+  for (const v in HOTKEYS) {
+    if (HOTKEYS[v] && HOTKEYS[v].toLowerCase() === key) {
+      e.preventDefault();
+      gotoView(v);
+      return;
+    }
+  }
+}, true);
 
 // Inline new-project input. window.prompt() is a no-op inside the Mac app's
 // WKWebView (no UI delegate), so we add the field to the sidebar directly —
@@ -2688,6 +2733,9 @@ function renderSettings() {
   body.append(settingsSection('Oura Ring', renderOuraSettings()));
   body.append(settingsSection('Sunrise & sunset', renderLocationSettings()));
 
+  // ── page hotkeys ──
+  body.append(settingsSection('Page hotkeys', renderHotkeySettings()));
+
   // ── keyboard shortcuts ──
   const keysCard = el('div', 'set-card');
   for (const g of KEY_HELP) {
@@ -2720,6 +2768,52 @@ function renderSettings() {
   }
   cmdCard.append(cmdGrp);
   body.append(settingsSection('Slash commands (type in the prompt)', cmdCard));
+}
+
+// Page hotkeys: one row per page with a clickable key button. Clicking it
+// captures the next letter pressed (used with ⌘). Letters stay unique — binding
+// a letter already in use moves it. The choice is saved in this browser.
+function hotkeyLabel(letter) {
+  return letter ? `⌘ ${letter.toUpperCase()}` : 'none';
+}
+function renderHotkeySettings() {
+  const card = el('div', 'set-card');
+  for (const { view: v, label } of HOTKEY_VIEWS) {
+    const row = el('div', 'set-row');
+    row.append(el('span', '', label));
+    const btn = el('button', 'hotkey-btn', hotkeyLabel(HOTKEYS[v]));
+    btn.onclick = () => captureHotkey(btn, v);
+    row.append(btn);
+    card.append(row);
+  }
+  card.append(el('div', 'dim', 'Click a key, then press a letter (used with ⌘). Esc cancels · ⌫ clears. Note: macOS may intercept ⌘H in the browser — it works in the Gretchen app.'));
+  const reset = el('button', '', 'Reset to defaults');
+  reset.onclick = () => { saveHotkeys({ ...DEFAULT_HOTKEYS }); renderSettings(); };
+  card.append(reset);
+  return card;
+}
+function captureHotkey(btn, v) {
+  btn.textContent = 'press a letter…';
+  btn.classList.add('capturing');
+  const onKey = (e) => {
+    if (['Meta', 'Shift', 'Control', 'Alt'].includes(e.key)) return; // wait for the real key
+    e.preventDefault();
+    e.stopPropagation();
+    document.removeEventListener('keydown', onKey, true);
+    if (e.key === 'Escape') return renderSettings();
+    const map = { ...HOTKEYS };
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      delete map[v];
+    } else {
+      const letter = (e.key || '').toLowerCase();
+      if (letter.length !== 1) return renderSettings();
+      for (const k in map) if (map[k] && map[k].toLowerCase() === letter) delete map[k]; // keep unique
+      map[v] = letter;
+    }
+    saveHotkeys(map);
+    renderSettings();
+  };
+  document.addEventListener('keydown', onKey, true);
 }
 
 function renderTagColorSettings() {

@@ -162,7 +162,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Gretchen", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Gretchen", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        // no ⌘H here — it's freed so the web app can use it as the "home" page
+        // hotkey; hiding is still available from the menu and via ⌘-Tab
+        appMenu.addItem(withTitle: "Hide Gretchen", action: #selector(NSApplication.hide(_:)), keyEquivalent: "")
         appMenu.addItem(withTitle: "Quit Gretchen", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 

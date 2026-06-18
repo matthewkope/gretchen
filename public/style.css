@@ -710,6 +710,13 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .theme-toggle button.active { background: var(--bg3); color: var(--accent); }
 .theme-toggle button:hover { color: var(--accent); }
 
+/* page hotkeys: a key-cap-style button per page, right-aligned in its row */
+.hotkey-btn {
+  margin-left: auto; min-width: 64px; text-align: center;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
+}
+.hotkey-btn.capturing { border-color: var(--accent); color: var(--accent); }
+
 /* tag colour pickers */
 .tagcolor-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tagcolor-name { min-width: 90px; font-weight: 600; }
