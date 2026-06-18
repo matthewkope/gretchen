@@ -1747,10 +1747,13 @@ async function fillActivity(card, wrap) {
     return;
   }
   const counts = data.counts || {};
-  const end = new Date(`${data.today}T00:00:00`);
-  // start 52 weeks back, then rewind to that week's Sunday so columns align
-  const start = new Date(end);
-  start.setDate(start.getDate() - 52 * 7);
+  // show the whole calendar year (Jan 1 → Dec 31), projecting future days as
+  // empty squares; the final week may spill into early next year.
+  const year = Number(data.today.slice(0, 4));
+  const yearStart = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  // rewind to the week's Sunday so columns align; days before Jan 1 stay blank
+  const start = new Date(yearStart);
   start.setDate(start.getDate() - start.getDay());
 
   // build week columns
@@ -1760,13 +1763,13 @@ async function fillActivity(card, wrap) {
   while (cur <= end) {
     const week = [];
     for (let i = 0; i < 7; i++) {
-      if (cur <= end) {
+      if (cur >= yearStart && cur <= end) {
         const ds = actFmt(cur);
         const n = counts[ds] || 0;
         total += n;
         week.push({ ds, n });
       } else {
-        week.push(null);
+        week.push(null); // padding before Jan 1 (or after Dec 31)
       }
       cur.setDate(cur.getDate() + 1);
     }
@@ -1833,7 +1836,7 @@ async function fillActivity(card, wrap) {
 
   // legend: total + Less ▢▢▢▢▢ More
   const legend = el('div', 'clegend');
-  legend.append(el('span', 'cleg-total dim', `${total} completed in the last year`));
+  legend.append(el('span', 'cleg-total dim', `${total} completed in ${year}`));
   const scale = el('span', 'cleg-scale');
   scale.append(el('span', 'dim', 'Less'));
   for (let l = 0; l <= 4; l++) {
