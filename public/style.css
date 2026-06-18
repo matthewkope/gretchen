@@ -312,15 +312,16 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .kan-cards { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 8px; padding: 1px; }
 .kan-card {
   position: relative; background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
-  padding: 8px 22px 8px 10px; cursor: grab; font-size: 13px; line-height: 1.4;
+  padding: 8px 22px 8px 10px; cursor: pointer; font-size: 13px; line-height: 1.4;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
   transition: box-shadow .12s ease, border-color .12s ease;
 }
 .kan-card:hover { border-color: var(--accent); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12); }
-.kan-card.dragging { opacity: 0.45; border-style: dashed; border-color: var(--accent); box-shadow: none; }
+.kan-card:active { cursor: grabbing; } /* the grabbing "glove" while held */
+.kan-card.dragging { opacity: 0.45; cursor: grabbing; border-style: dashed; border-color: var(--accent); box-shadow: none; }
 .kan-card.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .kan-card.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
-.kan-card-title { white-space: pre-wrap; word-break: break-word; cursor: text; }
+.kan-card-title { white-space: pre-wrap; word-break: break-word; cursor: inherit; }
 .kan-card-title .tag {
   display: inline-block; color: var(--yellow); cursor: pointer;
   background: var(--bg3); border-radius: 999px; padding: 0 7px; font-size: 11px; line-height: 1.5;

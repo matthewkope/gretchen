@@ -1587,8 +1587,13 @@ function cityAutocomplete(host, onPick, placeholder = 'city name, e.g. Falls Chu
     else if (e.key === 'ArrowUp' && results.length) { e.preventDefault(); sel = (sel - 1 + results.length) % results.length; draw(); }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      if (sel >= 0 && results[sel]) { close(); onPick(results[sel]); }
-      else { const v = input.value.trim(); if (v) { close(); onPick(v); } } // free-typed fallback
+      // capture the highlighted match BEFORE close() resets results/sel, so
+      // Enter picks the same place a click would (else fall back to free text)
+      const chosen = sel >= 0 ? results[sel] : null;
+      const typed = input.value.trim();
+      close();
+      if (chosen) onPick(chosen);
+      else if (typed) onPick(typed);
     } else if (e.key === 'Escape') {
       if (results.length) close();
       else renderHome();
