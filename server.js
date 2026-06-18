@@ -31,6 +31,7 @@ import {
   loadLocation, saveLocation, clearLocation, geocode, geocodeSearch, sunTimes, fmtSunTime,
 } from './lib/sun.js';
 import { fetchUv } from './lib/uv.js';
+import { loadGoals, saveGoals } from './lib/goals.js';
 import { tasksToIcs } from './lib/ics.js';
 import { appleCalAvailable, listCalendars, fetchEvents, setCalendarEnabled, loadConnected, setConnected } from './lib/applecal.js';
 
@@ -151,6 +152,7 @@ function stateFor(project) {
     tracking: tracking && { ...tracking, elapsed: fmtDuration(Date.now() - tracking.startedAt) },
     time: timeStats(),
     email: getEmail(),
+    goals: loadGoals(),
     toggl: {
       connected: !!togglToken(),
       env: !!process.env.TOGGL_API_TOKEN, // token from $TOGGL_API_TOKEN can't be removed from the UI
@@ -520,6 +522,11 @@ const routes = {
       return { ok: true };
     }
     return { error: `unknown action ${action}` };
+  },
+
+  // save the home page's goals list (up to 5 bullets; normalised in saveGoals)
+  'POST /api/goals'({ goals }) {
+    return { ok: true, goals: saveGoals(goals) };
   },
 
   // Apple Calendar: refresh the list (also the first-time permission prompt,

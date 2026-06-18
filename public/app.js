@@ -1711,6 +1711,9 @@ function renderHome() {
 
   const grid = el('div', 'home-grid');
 
+  // ── goals (editable, up to 5 bullets) ──
+  grid.append(mkGoalsCard());
+
   // ── sunrise / sunset ──
   const sunCard = el('div', 'home-card');
   sunCard.append(el('div', 'home-card-head', 'sunrise & sunset'));
@@ -1965,6 +1968,13 @@ async function fillTimeWeek(head, body) {
     body.append(el('div', 'dim', 'could not load time'));
     return;
   }
+  // a missing endpoint (e.g. the Mac app's bundled node server is stale after a
+  // server.js change — ⌘R reloads the page, not the server) shouldn't look like
+  // an empty week. Say so plainly.
+  if (data.error || !data.days) {
+    body.append(el('div', 'dim', "couldn't load time — if you're in the Gretchen app, quit and reopen it to refresh its server"));
+    return;
+  }
   const days = data.days || [];
   const projects = data.projects || [];
   const total = data.total || 0;
@@ -2129,6 +2139,61 @@ function hourInTz(tz) {
   } catch {
     return new Date().getHours();
   }
+}
+
+// the home goals card: up to 5 editable bullet points, saved to ~/.gretchen.
+// Each filled goal is a row; one empty "add a goal…" slot trails it until full.
+const MAX_GOALS = 5;
+function mkGoalsCard() {
+  const goals = (S.goals || []).slice(0, MAX_GOALS);
+  const card = el('div', 'home-card goals-card');
+  card.append(el('div', 'home-card-head', 'goals'));
+  const list = el('div', 'goals-list');
+  card.append(list);
+
+  // persist whatever is currently typed; keep S.goals in sync so the 4s poll
+  // sees no change and won't re-render the card out from under the user
+  const save = () => {
+    const vals = [...list.querySelectorAll('.goal-input')].map((i) => i.value.trim()).filter(Boolean).slice(0, MAX_GOALS);
+    S.goals = vals;
+    api('/api/goals', { goals: vals });
+  };
+
+  const addRow = (text, isNew) => {
+    const row = el('div', 'goal-row');
+    row.append(el('span', 'goal-bullet', '•'));
+    const input = el('input', 'goal-input');
+    input.value = text || '';
+    input.placeholder = isNew ? 'add a goal…' : 'goal';
+    input.maxLength = 140;
+    input.onkeydown = (e) => {
+      e.stopPropagation(); // keep the board's global keys out of this field
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        save();
+        const inputs = [...list.querySelectorAll('.goal-input')];
+        const last = inputs[inputs.length - 1];
+        if (input === last && input.value.trim() && inputs.length < MAX_GOALS) {
+          addRow('', true).focus(); // room left → start the next bullet
+        } else {
+          const next = inputs[inputs.indexOf(input) + 1];
+          if (next) next.focus(); else input.blur();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        input.blur();
+      }
+    };
+    input.onblur = save;
+    row.append(input);
+    list.append(row);
+    return input;
+  };
+
+  goals.forEach((g) => addRow(g, false));
+  if (goals.length < MAX_GOALS) addRow('', true);
+  if (!goals.length) card.append(el('div', 'well-sub dim', 'what do you want to get done? up to 5.'));
+  return card;
 }
 
 // the home UV card: current index, today's peak, and an hourly bar chart of the
@@ -2997,7 +3062,7 @@ async function pollSync() {
   } catch { return; }
   if (!next || next.error) return;
   const sig = JSON.stringify([
-    next.tags, next.projects, next.stats, next.dashboard, next.tracking, next.uv, next.sun, next.oura,
+    next.tags, next.projects, next.stats, next.dashboard, next.tracking, next.uv, next.sun, next.oura, next.goals,
     (next.tasks || []).map((t) => `${t.title}|${t.done}|${t.date || ''}|${t.indent || 0}`),
   ]);
   if (sig === stateSig || appBusy()) return; // unchanged, or the user started interacting
