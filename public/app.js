@@ -1899,7 +1899,7 @@ function mkTimeWeekCard() {
 async function fillTimeWeek(head, body) {
   let data;
   try {
-    data = await api('/api/time-week');
+    data = await api(`/api/time-week?source=${currentTimeSource()}`);
   } catch {
     body.append(el('div', 'dim', 'could not load time'));
     return;
@@ -1908,6 +1908,8 @@ async function fillTimeWeek(head, body) {
   const projects = data.projects || [];
   const total = data.total || 0;
   head.querySelector('.tweek-total').textContent = `· ${fmtClock(total)}`;
+
+  if (data.togglError) body.append(el('div', 'dim', `Toggl: ${data.togglError}`));
 
   if (total === 0) {
     body.append(el('div', 'dim', 'no time tracked yet this week'));
@@ -2294,6 +2296,16 @@ function applyCollapseTrigger(trigger) {
   if (view === 'settings') renderSettings();
 }
 
+// time-entry source for the home "This week" widget: 'local' (time.csv, the
+// default), 'toggl' (Toggl Track API), or 'both' (union of the two)
+function currentTimeSource() {
+  return localStorage.getItem('gretchen-time-source') || 'local';
+}
+function applyTimeSource(src) {
+  try { localStorage.setItem('gretchen-time-source', src); } catch {}
+  if (view === 'settings') renderSettings();
+}
+
 // a segmented control of two-or-more options (theme, font, checkbox shape)
 function segToggle(options, current, onPick) {
   const t = el('div', 'theme-toggle');
@@ -2452,6 +2464,22 @@ function renderSettings() {
 
   // ── tag colours ──
   body.append(settingsSection('Tag colours', renderTagColorSettings()));
+
+  // ── time-tracking source (home "This week" widget) ──
+  const tsCard = el('div', 'set-card');
+  const tsRow = el('div', 'set-row');
+  tsRow.append(el('span', '', 'Show entries from'));
+  tsRow.append(segToggle(
+    [
+      { value: 'local', label: 'this computer' },
+      { value: 'toggl', label: 'Toggl API' },
+      { value: 'both', label: 'both' },
+    ],
+    currentTimeSource(), applyTimeSource,
+  ));
+  tsCard.append(tsRow);
+  tsCard.append(el('div', 'dim', 'Where the home “This week” chart pulls time entries: this computer’s local time log (time.csv), the Toggl Track API (needs Toggl connected in the Time view), or both combined. Entries are grouped by project; anything unlabelled is “Untitled”.'));
+  body.append(settingsSection('Time tracking', tsCard));
 
   // ── calendars, Oura, location ──
   body.append(settingsSection('Calendars', renderCalendarSettings()));

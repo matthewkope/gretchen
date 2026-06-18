@@ -15,10 +15,13 @@ import {
   dateSuggestions, listProjects, projectExists, slugifyProject, PRIORITIES,
   SORT_KEYS, loadBoard, saveBoard,
 } from './lib/store.js';
-import { logEntry, timeStats, weekStats, timeCsvPath, getEmail, setEmail, fmtDuration } from './lib/timer.js';
+import {
+  logEntry, timeStats, localEntries, aggregateWeek, weekRange,
+  timeCsvPath, getEmail, setEmail, fmtDuration,
+} from './lib/timer.js';
 import {
   togglToken, verifyToken, saveToken, clearToken, startEntry, stopEntry,
-  loadMap, saveMap, mapKey, togglProjectByName, TOKEN_URL,
+  loadMap, saveMap, mapKey, togglProjectByName, fetchEntries, TOKEN_URL,
 } from './lib/toggl.js';
 import {
   ouraToken, verifyOuraToken, saveOuraToken, clearOuraToken,
@@ -646,9 +649,26 @@ const routes = {
     return { header: rows[0] || '', rows: rows.slice(1).reverse(), path: timeCsvPath() };
   },
 
-  // this-week tracked time for the home widget (per-day bars + per-project split)
-  'GET /api/time-week'() {
-    return weekStats();
+  // this-week tracked time for the home widget (per-day bars + per-project split).
+  // ?source=local|toggl|both selects where entries come from (default local).
+  async 'GET /api/time-week'(_body, query) {
+    const source = query?.get('source') || 'local';
+    const entries = [];
+    if (source !== 'toggl') entries.push(...localEntries());
+    let togglError = null;
+    if (source !== 'local') {
+      if (togglToken()) {
+        try {
+          const { startDate, endDate } = weekRange();
+          entries.push(...(await fetchEntries(startDate, endDate)));
+        } catch (e) {
+          togglError = e.message;
+        }
+      } else if (source === 'toggl') {
+        togglError = 'Toggl not connected';
+      }
+    }
+    return { ...aggregateWeek(entries), source, togglError };
   },
 };
 
@@ -694,7 +714,7 @@ const server = http.createServer(async (req, res) => {
         for await (const c of req) chunks.push(c);
         body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
       }
-      const out = await route(body);
+      const out = await route(body, url.searchParams);
       return json(out.error ? 400 : 200, out);
     }
 
