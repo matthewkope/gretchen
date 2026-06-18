@@ -28,7 +28,7 @@ import {
   loadLocation, saveLocation, clearLocation, geocode, sunTimes, fmtSunTime,
 } from './lib/sun.js';
 import { tasksToIcs } from './lib/ics.js';
-import { appleCalAvailable, listCalendars, fetchEvents, setCalendarEnabled } from './lib/applecal.js';
+import { appleCalAvailable, listCalendars, fetchEvents, setCalendarEnabled, loadConnected, setConnected } from './lib/applecal.js';
 
 const PORT = Number(process.env.PORT || 5277);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -58,6 +58,7 @@ function togglDescription(title) {
 let appleCalState = { available: appleCalAvailable(), authorized: false, calendars: [] };
 async function refreshAppleCal() {
   appleCalState = await listCalendars();
+  if (appleCalState.authorized) setConnected(true); // remember the opt-in across restarts
   return appleCalState;
 }
 
@@ -160,7 +161,9 @@ function stateFor(project) {
           }
         : null,
     },
-    appleCal: { ...appleCalState, port: PORT }, // port for the tasks.ics subscribe URL
+    // `connected` is the persisted opt-in (survives restarts); `authorized` is
+    // the live in-memory status, only true once the helper has been probed
+    appleCal: { ...appleCalState, connected: loadConnected(), port: PORT }, // port for the tasks.ics subscribe URL
     today: today(),
   };
 }
@@ -180,12 +183,14 @@ function stopTimer() {
 
 const routes = {
 
-  // add a task from raw prompt text (same parser as the CLI)
+  // add a task from raw prompt text (same parser as the CLI). New inbox tasks
+  // land at the very top (newest-first capture); project tasks keep sorting.
   'POST /api/input'({ text, project }) {
     const task = parseInput(text || '');
     if (!task.title) return { error: 'empty task' };
     const p = projectOrNull(project);
-    saveTasks(sortTasks([...loadTasks(p), task]), p);
+    const existing = loadTasks(p);
+    saveTasks(p === null ? [task, ...existing] : sortTasks([...existing, task]), p);
     return { ok: true };
   },
 
@@ -647,6 +652,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 refreshOura(); // warm last night's sleep summary so the first /api/state has it
+// if Apple Calendar was connected before, repopulate the list on boot so the
+// legend/toggles come back; the OS grant persists, so this never re-prompts
+if (appleCalAvailable() && loadConnected()) refreshAppleCal();
 
 server.listen(PORT, () => {
   console.log(`✻ Gretchen — http://localhost:${PORT}`);

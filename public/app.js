@@ -1190,7 +1190,10 @@ function calVisibleRange() {
 }
 
 async function ensureCalEvents(startISO, endISO) {
-  const authed = !!(S.appleCal && S.appleCal.authorized);
+  // fetch events if Calendar access is live (authorized) or the user connected
+  // before (connected) — the events endpoint reads the OS grant directly, so
+  // they come back after a restart without re-connecting
+  const authed = !!(S.appleCal && (S.appleCal.authorized || S.appleCal.connected));
   const key = `${authed}|${startISO}|${endISO}`;
   if (key === calRangeKey) return; // already loaded (or loading) this range
   calRangeKey = key;
@@ -1944,7 +1947,7 @@ function renderCalendarSettings() {
   const card = el('div', 'set-card');
   const ac = S.appleCal || { available: false, authorized: false, calendars: [] };
 
-  const connected = ac.available && ac.authorized;
+  const connected = ac.available && (ac.authorized || ac.connected);
   const status = el('div', 'set-status');
   status.append(el('span', 'set-dot' + (connected ? ' on' : ''), connected ? '●' : '○'));
   status.append(el('span', '', !ac.available
