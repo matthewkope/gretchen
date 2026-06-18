@@ -500,6 +500,24 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .home-big .ready-score { color: var(--green); }
 .home-card .well-tools { opacity: 1; margin-left: 0; margin-top: 4px; }
 
+/* ── home: UV index card ── */
+.home-big .uv-now { font-weight: 600; }
+.home-big .uv-cat { font-size: 13px; color: var(--dim); text-transform: capitalize; }
+.uv-chart {
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 56px; margin-top: 8px;
+}
+.uv-bar-col {
+  flex: 1; height: 100%; display: flex; align-items: flex-end;
+  border-radius: 3px;
+}
+.uv-bar-col.now { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.uv-bar {
+  width: 100%; min-height: 2px; border-radius: 3px 3px 0 0;
+  background: var(--dim); transition: height 0.2s ease;
+}
+.uv-axis { display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; }
+
 /* ── home: tasks-completed contribution grid (GitHub-style) ── */
 .cactivity { max-width: 720px; margin-bottom: 16px; }
 .cwrap { overflow-x: auto; padding-bottom: 2px; }
@@ -545,6 +563,61 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
   0%, 30% { background: color-mix(in srgb, var(--accent) 35%, var(--bg2)); border-color: var(--accent); }
   100% { background: var(--bg2); border-color: var(--border); }
 }
+
+/* ── home: "this week" tracked-time widget (Toggl-style) ── */
+.tweek { max-width: 720px; margin-bottom: 16px; gap: 14px; }
+.tweek-head { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 600; }
+.tweek-total { font-weight: 400; }
+.tweek-body { display: flex; flex-direction: column; gap: 16px; }
+
+/* chart + donut side by side */
+.tweek-charts { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+.tweek-chartwrap { flex: 1; min-width: 320px; }
+
+/* bar chart */
+.tweek-chart { display: flex; gap: 8px; height: 150px; }
+.tweek-yaxis { position: relative; width: 42px; flex: 0 0 42px; }
+.tweek-ytick {
+  position: absolute; right: 0; transform: translateY(50%);
+  font-size: 10px; color: var(--dim); white-space: nowrap;
+}
+.tweek-plot { position: relative; flex: 1; border-left: 1px solid var(--border); }
+.tweek-grid {
+  position: absolute; left: 0; right: 0; height: 0;
+  border-top: 1px solid var(--border); opacity: 0.5;
+}
+.tweek-bars {
+  position: absolute; inset: 0; display: flex; align-items: flex-end;
+  gap: 6px; padding: 0 6px;
+}
+.tweek-bar-col { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.tweek-bar {
+  width: 60%; max-width: 26px; min-height: 0; border-radius: 3px 3px 0 0;
+  background: var(--accent);
+}
+.tweek-xaxis { display: flex; gap: 6px; padding: 6px 6px 0 50px; }
+.tweek-xtick { flex: 1; text-align: center; font-size: 11px; line-height: 1.2; }
+
+/* donut */
+.tweek-donut {
+  position: relative; width: 150px; height: 150px; border-radius: 50%; flex: 0 0 auto;
+}
+.tweek-donut-hole {
+  position: absolute; inset: 26px; border-radius: 50%; background: var(--bg2);
+}
+
+/* project breakdown table */
+.tweek-table { display: flex; flex-direction: column; }
+.tweek-row {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 16px;
+  align-items: center; padding: 7px 2px; border-top: 1px solid var(--border);
+}
+.tweek-row-head { font-weight: 600; border-top: none; color: var(--fg); }
+.tweek-proj { display: flex; align-items: center; gap: 8px; }
+.tweek-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.tweek-time { min-width: 70px; text-align: right; color: var(--dim); }
+.tweek-pct { min-width: 64px; text-align: right; color: var(--dim); }
+.tweek-row-head .tweek-time, .tweek-row-head .tweek-pct { color: var(--fg); }
 
 /* ── settings ────────────────────────────────────────── */
 #settings-body { display: flex; flex-direction: column; gap: 22px; max-width: 640px; }

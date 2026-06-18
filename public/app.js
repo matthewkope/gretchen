@@ -977,7 +977,7 @@ function kanColDragStart(e, colEl, ci, head) {
     // bit before the lane is fully half over a neighbour
     const dir = ev.clientX - lastX; lastX = ev.clientX;
     const dragRect = colEl.getBoundingClientRect();
-    const probe = dragRect.left + dragRect.width / 2 + (dir >= 0 ? 1 : -1) * dragRect.width * 0.2;
+    const probe = dragRect.left + dragRect.width / 2 + (dir >= 0 ? 1 : -1) * dragRect.width * 0.3;
     const others = [...board.children].filter((c) => c.classList.contains('kan-col') && c !== colEl);
     let ref = null;
     for (const c of others) { const b = c.getBoundingClientRect(); if (probe < b.left + b.width / 2) { ref = c; break; } }
@@ -1645,6 +1645,9 @@ function renderHome() {
   // ── GitHub-style "tasks completed" contribution grid ──
   box.append(mkActivityCard());
 
+  // ── "this week" tracked-time project counter (Toggl-style) ──
+  box.append(mkTimeWeekCard());
+
   const grid = el('div', 'home-grid');
 
   // ── sunrise / sunset ──
@@ -1695,6 +1698,9 @@ function renderHome() {
     sleepCard.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
   }
   grid.append(sleepCard);
+
+  // ── UV index through the day ──
+  grid.append(mkUvCard());
 
   box.append(grid);
 }
@@ -1852,6 +1858,142 @@ async function fillActivity(card, wrap) {
   wrap.replaceChildren(cal, legend);
 }
 
+/* ── "this week" tracked-time widget (Toggl-style) ───────────────────── */
+const TW_COLORS = ['#4f8acb', '#d97757', '#7cb87c', '#d4a94f', '#a071c9', '#5bb3b3', '#cb6f9a', '#9aa0a6'];
+
+// H:MM:SS with no leading zero on hours, e.g. 0:08:02 (matches Toggl)
+function fmtClock(secs) {
+  secs = Math.round(secs);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// nice round y-axis ticks (in hours) up to and including the max value.
+// Steps are 1/2/5 ×10ⁿ so labels never need more decimals than the step itself.
+function niceTicks(maxHours, count = 5) {
+  if (maxHours <= 0) return { top: 1, ticks: [0, 1], decimals: 0 };
+  const raw = maxHours / count;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 5, 10].map((m) => m * pow).find((c) => c >= raw) || 10 * pow;
+  const ticks = [];
+  for (let v = 0; v <= maxHours + step * 1e-6; v += step) ticks.push(v);
+  if (ticks[ticks.length - 1] < maxHours) ticks.push(ticks[ticks.length - 1] + step);
+  const decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+  return { top: ticks[ticks.length - 1], ticks, decimals };
+}
+
+function mkTimeWeekCard() {
+  const card = el('div', 'home-card tweek');
+  const head = el('div', 'tweek-head');
+  head.append(el('span', 'tweek-title', 'This week'));
+  head.append(el('span', 'tweek-total dim', ''));
+  card.append(head);
+  const body = el('div', 'tweek-body');
+  card.append(body);
+  fillTimeWeek(head, body);
+  return card;
+}
+
+async function fillTimeWeek(head, body) {
+  let data;
+  try {
+    data = await api('/api/time-week');
+  } catch {
+    body.append(el('div', 'dim', 'could not load time'));
+    return;
+  }
+  const days = data.days || [];
+  const projects = data.projects || [];
+  const total = data.total || 0;
+  head.querySelector('.tweek-total').textContent = `· ${fmtClock(total)}`;
+
+  if (total === 0) {
+    body.append(el('div', 'dim', 'no time tracked yet this week'));
+    return;
+  }
+
+  const charts = el('div', 'tweek-charts');
+
+  // ── bar chart with a nice hour-scaled y-axis + gridlines ──
+  const maxHours = Math.max(...days.map((d) => d.secs)) / 3600;
+  const { top, ticks, decimals } = niceTicks(maxHours);
+
+  const chart = el('div', 'tweek-chart');
+  const yaxis = el('div', 'tweek-yaxis');
+  const plot = el('div', 'tweek-plot');
+  for (const tk of ticks) {
+    const pct = (tk / top) * 100;
+    const line = el('div', 'tweek-grid');
+    line.style.bottom = `${pct}%`;
+    plot.append(line);
+    const lab = el('div', 'tweek-ytick');
+    lab.style.bottom = `${pct}%`;
+    lab.textContent = `${tk === 0 ? '0' : tk.toFixed(decimals)} h`;
+    yaxis.append(lab);
+  }
+  const bars = el('div', 'tweek-bars');
+  for (const d of days) {
+    const col = el('div', 'tweek-bar-col');
+    const bar = el('div', 'tweek-bar');
+    bar.style.height = `${(d.secs / 3600 / top) * 100}%`;
+    bar.title = `${d.label} ${d.short}: ${fmtClock(d.secs)}`;
+    col.append(bar);
+    bars.append(col);
+  }
+  plot.append(bars);
+  chart.append(yaxis, plot);
+
+  // weekday + date labels under the plot, aligned to the bars
+  const xaxis = el('div', 'tweek-xaxis');
+  for (const d of days) {
+    const lab = el('div', 'tweek-xtick');
+    lab.append(el('div', '', d.label));
+    lab.append(el('div', 'dim', d.short));
+    xaxis.append(lab);
+  }
+
+  const chartWrap = el('div', 'tweek-chartwrap');
+  chartWrap.append(chart, xaxis);
+  charts.append(chartWrap);
+
+  // ── donut of project proportions ──
+  const donut = el('div', 'tweek-donut');
+  let acc = 0;
+  const stops = projects.map((p, i) => {
+    const a = (acc / total) * 100;
+    acc += p.secs;
+    const b = (acc / total) * 100;
+    return `${TW_COLORS[i % TW_COLORS.length]} ${a}% ${b}%`;
+  });
+  donut.style.background = `conic-gradient(${stops.join(', ')})`;
+  donut.append(el('div', 'tweek-donut-hole'));
+  charts.append(donut);
+
+  body.append(charts);
+
+  // ── project breakdown table ──
+  const table = el('div', 'tweek-table');
+  const hrow = el('div', 'tweek-row tweek-row-head');
+  hrow.append(el('span', 'tweek-proj', 'Project'));
+  hrow.append(el('span', 'tweek-time', 'Time'));
+  hrow.append(el('span', 'tweek-pct', 'Percent'));
+  table.append(hrow);
+  projects.forEach((p, i) => {
+    const row = el('div', 'tweek-row');
+    const name = el('span', 'tweek-proj');
+    const dot = el('span', 'tweek-dot');
+    dot.style.background = TW_COLORS[i % TW_COLORS.length];
+    name.append(dot, document.createTextNode(p.name));
+    row.append(name);
+    row.append(el('span', 'tweek-time', fmtClock(p.secs)));
+    row.append(el('span', 'tweek-pct', `${((p.secs / total) * 100).toFixed(1)}%`));
+    table.append(row);
+  });
+  body.append(table);
+}
+
 function mkWellTool(label, tip, fn) {
   const b = el('button', 'well-tool', label);
   b.title = tip;
@@ -1894,6 +2036,80 @@ async function setLocation(city) {
 async function locationAction(body, okMsg) {
   const out = await api('/api/location', body);
   if (out.ok) { toast(okMsg); refresh(); }
+}
+async function uvAction(body, okMsg) {
+  const out = await api('/api/uv', body);
+  if (out.ok) { toast(okMsg); refresh(); }
+  else if (out.error) toast(out.error);
+}
+
+// WHO UV bands → label + colour (matches lib/uv.js uvCategory)
+const UV_BANDS = [
+  { max: 3, label: 'low', color: 'var(--green)' },
+  { max: 6, label: 'moderate', color: 'var(--yellow)' },
+  { max: 8, label: 'high', color: 'var(--accent)' },
+  { max: 11, label: 'very high', color: 'var(--red)' },
+  { max: Infinity, label: 'extreme', color: 'var(--red)' },
+];
+const uvBand = (uv) => (uv == null ? null : UV_BANDS.find((b) => uv < b.max));
+const fmtHour = (h) => (h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`);
+
+// the home UV card: current index, today's peak, and an hourly bar chart of the
+// whole day so you can see when it climbs and when it's safe to be out
+function mkUvCard() {
+  const uv = S.uv || { located: false };
+  const card = el('div', 'home-card');
+  card.append(el('div', 'home-card-head', 'uv index'));
+
+  if (!uv.located) {
+    const add = el('button', 'well-add', '+ set location for UV');
+    add.onclick = () => inlineField(card, { placeholder: 'city name, e.g. Falls Church', onSubmit: setLocation });
+    card.append(add);
+    return card;
+  }
+  if (!uv.hours || !uv.hours.length) {
+    card.append(el('div', 'dim', 'UV — syncing…'));
+    card.append(mkWellTool('↻', 'refresh UV', () => uvAction({ action: 'refresh' }, 'UV refreshed')));
+    return card;
+  }
+
+  const band = uvBand(uv.now);
+  const big = el('div', 'home-big');
+  const val = el('span', 'uv-now', uv.now != null ? String(uv.now) : '–');
+  if (band) val.style.color = band.color;
+  big.append(val);
+  if (band) big.append(el('span', 'uv-cat', band.label));
+  card.append(big);
+  if (uv.peak != null)
+    card.append(el('div', 'well-sub dim', `peak ${uv.peak} at ${fmtHour(uv.peakHour)}`));
+
+  // hourly bar chart — daylight-ish window (first to last non-zero hour)
+  const lit = uv.hours.filter((h) => h.uv != null && h.uv > 0);
+  const from = lit.length ? lit[0].hour : 6;
+  const to = lit.length ? lit[lit.length - 1].hour : 20;
+  const span = uv.hours.filter((h) => h.hour >= from && h.hour <= to);
+  const maxUv = Math.max(2, ...span.map((h) => h.uv || 0));
+  const chart = el('div', 'uv-chart');
+  for (const h of span) {
+    const col = el('div', 'uv-bar-col');
+    const bar = el('div', 'uv-bar');
+    bar.style.height = `${Math.round(((h.uv || 0) / maxUv) * 100)}%`;
+    const b = uvBand(h.uv);
+    if (b) bar.style.background = b.color;
+    if (h.hour === uv.nowHour) col.classList.add('now');
+    col.title = `${fmtHour(h.hour)} · UV ${h.uv ?? 0}`;
+    col.append(bar);
+    chart.append(col);
+  }
+  card.append(chart);
+  const axis = el('div', 'uv-axis dim');
+  axis.append(el('span', '', fmtHour(from)), el('span', '', fmtHour(uv.peakHour ?? Math.round((from + to) / 2))), el('span', '', fmtHour(to)));
+  card.append(axis);
+
+  const tools = el('div', 'well-tools');
+  tools.append(mkWellTool('↻', 'refresh UV', () => uvAction({ action: 'refresh' }, 'UV refreshed')));
+  card.append(tools);
+  return card;
 }
 
 function renderToggl() {
@@ -2615,7 +2831,7 @@ async function pollSync() {
   } catch { return; }
   if (!next || next.error) return;
   const sig = JSON.stringify([
-    next.tags, next.projects, next.stats, next.dashboard, next.tracking,
+    next.tags, next.projects, next.stats, next.dashboard, next.tracking, next.uv, next.sun, next.oura,
     (next.tasks || []).map((t) => `${t.title}|${t.done}|${t.date || ''}|${t.indent || 0}`),
   ]);
   if (sig === stateSig || appBusy()) return; // unchanged, or the user started interacting

@@ -15,7 +15,7 @@ import {
   dateSuggestions, listProjects, projectExists, slugifyProject, PRIORITIES,
   SORT_KEYS, loadBoard, saveBoard,
 } from './lib/store.js';
-import { logEntry, timeStats, timeCsvPath, getEmail, setEmail, fmtDuration } from './lib/timer.js';
+import { logEntry, timeStats, weekStats, timeCsvPath, getEmail, setEmail, fmtDuration } from './lib/timer.js';
 import {
   togglToken, verifyToken, saveToken, clearToken, startEntry, stopEntry,
   loadMap, saveMap, mapKey, togglProjectByName, TOKEN_URL,
@@ -27,6 +27,7 @@ import {
 import {
   loadLocation, saveLocation, clearLocation, geocode, sunTimes, fmtSunTime,
 } from './lib/sun.js';
+import { fetchUv } from './lib/uv.js';
 import { tasksToIcs } from './lib/ics.js';
 import { appleCalAvailable, listCalendars, fetchEvents, setCalendarEnabled, loadConnected, setConnected } from './lib/applecal.js';
 
@@ -73,6 +74,19 @@ async function refreshOura() {
   try {
     ouraData = await fetchSleepSummary();
     return ouraData;
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+// today's hourly UV index for the saved location, fetched on boot, hourly, and
+// on demand (the day's curve is stable — the client just highlights the current
+// hour, so it stays fresh between fetches without hammering the API)
+let uvData = null;
+async function refreshUv() {
+  try {
+    uvData = await fetchUv();
+    return uvData;
   } catch (e) {
     return { error: e.message };
   }
@@ -168,6 +182,10 @@ function stateFor(project) {
           }
         : null,
     },
+    uv: (() => {
+      if (uvData?.located && uvData.date && uvData.date !== today()) refreshUv(); // day rolled over \u2014 refetch in the background
+      return uvData ?? { located: !!loadLocation() };
+    })(),
     // `connected` is the persisted opt-in (survives restarts); `authorized` is
     // the live in-memory status, only true once the helper has been probed
     appleCal: { ...appleCalState, connected: loadConnected(), port: PORT }, // port for the tasks.ics subscribe URL
@@ -452,6 +470,7 @@ const routes = {
   async 'POST /api/location'({ action, city }) {
     if (action === 'clear') {
       clearLocation();
+      uvData = null; // UV is location-bound — drop the stale forecast
       return { ok: true };
     }
     if (action === 'set') {
@@ -461,10 +480,22 @@ const routes = {
         const loc = await geocode(q);
         if (!loc) return { error: `no place found for "${q}" — try a city name` };
         saveLocation(loc);
+        await refreshUv(); // pull the new city's UV so the home card fills right away
         return { ok: true, name: loc.name };
       } catch (e) {
         return { error: `lookup failed (${e.message}) — are you online?` };
       }
+    }
+    return { error: `unknown action ${action}` };
+  },
+
+  // refresh today's UV forecast on demand (the home card's ↻ button)
+  async 'POST /api/uv'({ action }) {
+    if (action === 'refresh') {
+      if (!loadLocation()) return { error: 'set a location first' };
+      const r = await refreshUv();
+      if (r?.error) return { error: `UV lookup failed (${r.error}) — are you online?` };
+      return { ok: true };
     }
     return { error: `unknown action ${action}` };
   },
@@ -614,6 +645,11 @@ const routes = {
     } catch {}
     return { header: rows[0] || '', rows: rows.slice(1).reverse(), path: timeCsvPath() };
   },
+
+  // this-week tracked time for the home widget (per-day bars + per-project split)
+  'GET /api/time-week'() {
+    return weekStats();
+  },
 };
 
 const server = http.createServer(async (req, res) => {
@@ -681,6 +717,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 refreshOura(); // warm last night's sleep summary so the first /api/state has it
+refreshUv();   // warm today's UV forecast for the home card
+setInterval(refreshUv, 60 * 60 * 1000).unref(); // keep it fresh + roll over at midnight
 // if Apple Calendar was connected before, repopulate the list on boot so the
 // legend/toggles come back; the OS grant persists, so this never re-prompts
 if (appleCalAvailable() && loadConnected()) refreshAppleCal();
