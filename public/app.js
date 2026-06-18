@@ -708,10 +708,9 @@ $('prompt').addEventListener('input', () => {
    Drag a card between columns to change its status; drag column headers to
    reorder. Cards reuse the board's tag colouring + date span. */
 let kanban = null;          // last GET /api/kanban
-let kanCardDrag = null;     // { col, i } of the card being dragged
+let kanCardDrag = null;     // { col, i } of the card being dragged (native HTML5 drag)
 let kanCardDragEl = null;   // the card element being dragged (for live reordering)
-let kanColDrag = null;      // index of the column being dragged
-let kanColDragEl = null;    // the column element being dragged
+// columns use a custom pointer drag (kanColDragStart), not these
 
 // Obsidian-style live drag: while a card/column is dragged, the others slide to
 // open a gap. FLIP — measure every sibling before the move, do the DOM move, then
@@ -816,27 +815,11 @@ function kanColumn(col, ci) {
   colEl.dataset.col = ci;
 
   const head = el('div', 'kan-col-head');
-  head.draggable = true;
-  head.addEventListener('dragstart', (e) => {
-    kanColDrag = ci;
-    kanColDragEl = colEl;
-    requestAnimationFrame(() => colEl.classList.add('col-dragging')); // after the drag image is grabbed
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', `col:${ci}`);
-  });
-  head.addEventListener('dragend', () => {
-    colEl.classList.remove('col-dragging');
-    clearKanTransforms();
-    if (kanColDrag == null) return;
-    // commit: drop before whatever column now follows the dragged one
-    let next = colEl.nextElementSibling;
-    while (next && !next.classList.contains('kan-col')) next = next.nextElementSibling;
-    const to = next ? Number(next.dataset.col) : (kanban.columns || []).length;
-    const from = kanColDrag;
-    kanColDrag = null;
-    kanColDragEl = null;
-    kanMoveColumn(from, to);
-  });
+  // Pointer-drag the whole list: it lifts out of flow and follows the cursor (a
+  // grabbed-and-carried feel, like the Obsidian video), while the other lists
+  // slide around a placeholder gap. Native HTML5 drag can't do this — it only
+  // shows the browser's faint snapshot — so columns use a custom pointer drag.
+  head.addEventListener('mousedown', (e) => kanColDragStart(e, colEl, ci, head));
   const collapsed = kanCollapsed.has(col.name);
   if (collapsed) colEl.classList.add('collapsed');
   const handle = el('span', 'kan-handle', '⠿');
@@ -945,10 +928,78 @@ async function kanMoveCard(from, toCol, toI) {
   if (out.ok) refresh();
 }
 async function kanMoveColumn(from, to) {
-  kanColDrag = null;
-  kanClearMarkers();
   const out = await api('/api/kanban', { action: 'move-column', from, to });
   if (out.ok) refresh();
+}
+
+// Pointer-drag a whole list (called from the column header's mousedown). The list
+// lifts out of flow and is carried under the cursor with a slight tilt + shadow;
+// a placeholder holds its gap and the other lists FLIP around it. A small move
+// threshold means a plain click/double-click (rename) still works on the header.
+function kanColDragStart(e, colEl, ci, head) {
+  if (e.button !== 0 || e.target.closest('button, input')) return; // chevron/menu/rename
+  const board = $('kanban-board');
+  const startX = e.clientX, startY = e.clientY;
+  let lifted = false, ph = null, offX = 0, offY = 0;
+
+  const lift = () => {
+    lifted = true;
+    const rect = colEl.getBoundingClientRect();
+    offX = startX - rect.left; offY = startY - rect.top;
+    ph = el('div', 'kan-col-ph'); // a gap the same size as the lifted list
+    ph.style.width = rect.width + 'px';
+    ph.style.height = rect.height + 'px';
+    colEl.parentNode.insertBefore(ph, colEl);
+    colEl.classList.add('kan-col-lift');
+    Object.assign(colEl.style, {
+      position: 'fixed', left: '0', top: '0', width: rect.width + 'px',
+      margin: '0', zIndex: '1000', pointerEvents: 'none',
+    });
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
+  };
+  const follow = (x, y) => {
+    colEl.style.transform = `translate(${x - offX}px, ${y - offY}px) rotate(2.5deg)`;
+  };
+
+  const onMove = (ev) => {
+    if (!lifted) {
+      if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return; // not yet a drag
+      lift();
+    }
+    follow(ev.clientX, ev.clientY);
+    // slot the placeholder before the first list whose midpoint is right of the cursor
+    const others = [...board.children].filter((c) => c.classList.contains('kan-col') && c !== colEl);
+    let ref = null;
+    for (const c of others) { const b = c.getBoundingClientRect(); if (ev.clientX < b.left + b.width / 2) { ref = c; break; } }
+    if (ref == null) ref = board.querySelector('.kan-addcol'); // stay left of "+ Add list"
+    if (ph.nextElementSibling === ref) return;
+    const first = captureKanRects('#kanban-board .kan-col', colEl); // measure before moving the gap
+    board.insertBefore(ph, ref);
+    playKanFlip(first); // slide the displaced lists across
+  };
+
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (!lifted) return; // it was just a click
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    // commit where the placeholder landed — skip the lifted list itself, which is
+    // still sitting at its old spot in the DOM (it's only out of flow visually)
+    let next = ph.nextElementSibling;
+    while (next && (!next.classList.contains('kan-col') || next === colEl)) next = next.nextElementSibling;
+    const to = next ? Number(next.dataset.col) : (kanban.columns || []).length;
+    // drop the list back into flow at the gap, then commit (refresh rebuilds clean)
+    ph.replaceWith(colEl);
+    colEl.classList.remove('kan-col-lift');
+    for (const p of ['position', 'left', 'top', 'width', 'margin', 'zIndex', 'pointerEvents', 'transform'])
+      colEl.style[p] = '';
+    kanMoveColumn(ci, to);
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 // ── card inputs: tag/date/priority autocomplete + live date formatting ──
@@ -1189,29 +1240,6 @@ $('tasks').addEventListener('dragover', (e) => {
   playRectFlip(first); // slide the displaced rows from their old spot to the new one
 });
 $('tasks').addEventListener('drop', (e) => { if (dragEl != null) e.preventDefault(); });
-
-// Live column drag: while a list is dragged the others slide left/right to open a
-// gap (FLIP on X). Attached once to the persistent board; commit happens on the
-// header's dragend. Mirrors the inbox row reorder, one axis over.
-$('kanban-board').addEventListener('dragover', (e) => {
-  if (kanColDragEl == null) return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  const board = $('kanban-board');
-  const cols = [...board.children].filter((c) => c.classList.contains('kan-col') && c !== kanColDragEl);
-  // insert before the first column whose horizontal midpoint is right of the cursor
-  let ref = null;
-  for (const c of cols) {
-    const box = c.getBoundingClientRect();
-    if (e.clientX < box.left + box.width / 2) { ref = c; break; }
-  }
-  if (ref == null) ref = board.querySelector('.kan-addcol'); // keep the dragged list left of "+ Add list"
-  if (kanColDragEl.nextElementSibling === ref) return;
-  const first = captureKanRects('#kanban-board .kan-col', kanColDragEl); // measure before the move
-  board.insertBefore(kanColDragEl, ref);
-  playKanFlip(first); // slide the displaced lists across
-});
-$('kanban-board').addEventListener('drop', (e) => { if (kanColDragEl != null) e.preventDefault(); });
 
 $('new-project').onclick = newProjectPrompt;
 
@@ -1483,16 +1511,112 @@ function inlineField(host, { placeholder, type, onSubmit }) {
   input.focus();
 }
 
+// ── home banner (Notion-style cover) ────────────────────────────────
+// Built-in gradient presets; the choice (a preset id or 'custom') lives in
+// localStorage like the other UI prefs. Custom uploads are downscaled in a
+// canvas before saving so the data URL stays well under the storage quota.
+const BANNER_PRESETS = {
+  'grad-warm': 'linear-gradient(120deg, #e0855f, #d4a94f)',
+  'grad-ocean': 'linear-gradient(120deg, #4f8acb, #6fb6c9)',
+  'grad-forest': 'linear-gradient(120deg, #4f8a4f, #7cb87c)',
+  'grad-dusk': 'linear-gradient(120deg, #7a5fc1, #c15f9a)',
+  'grad-mono': 'linear-gradient(120deg, #4a4439, #8a857c)',
+};
+const DEFAULT_BANNER = 'grad-warm';
+
+function currentBanner() {
+  return localStorage.getItem('gretchen-banner') || DEFAULT_BANNER;
+}
+function bannerBackground(id) {
+  if (id === 'custom') {
+    const img = localStorage.getItem('gretchen-banner-img');
+    if (img) return `center / cover no-repeat url("${img}")`;
+  }
+  return BANNER_PRESETS[id] || BANNER_PRESETS[DEFAULT_BANNER];
+}
+function setBanner(id) {
+  localStorage.setItem('gretchen-banner', id);
+  renderHomeBanner();
+}
+function loadBannerFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 1600;
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = el('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      try {
+        localStorage.setItem('gretchen-banner-img', canvas.toDataURL('image/jpeg', 0.82));
+        localStorage.setItem('gretchen-banner', 'custom');
+        renderHomeBanner();
+        toast('banner updated');
+      } catch (e) {
+        toast('image too large to save — try a smaller one');
+      }
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+function renderHomeBanner() {
+  const wrap = $('home-banner');
+  if (!wrap) return;
+  wrap.replaceChildren();
+  const id = currentBanner();
+  wrap.style.background = bannerBackground(id);
+
+  const change = el('button', 'banner-change', 'change cover');
+  change.onclick = (e) => {
+    e.stopPropagation();
+    const open = wrap.querySelector('.banner-picker');
+    if (open) { open.remove(); return; }
+    wrap.append(buildBannerPicker(id));
+  };
+  wrap.append(change);
+}
+function buildBannerPicker(currentId) {
+  const panel = el('div', 'banner-picker');
+  const presets = el('div', 'banner-presets');
+  for (const [pid, css] of Object.entries(BANNER_PRESETS)) {
+    const sw = el('button', 'banner-swatch' + (pid === currentId ? ' sel' : ''));
+    sw.style.background = css;
+    sw.title = pid.replace('grad-', '');
+    sw.onclick = () => setBanner(pid);
+    presets.append(sw);
+  }
+  panel.append(presets);
+
+  const file = el('input');
+  file.type = 'file';
+  file.accept = 'image/*';
+  file.className = 'hidden';
+  file.onchange = () => { if (file.files[0]) loadBannerFile(file.files[0]); };
+  const up = el('button', 'banner-action', '📁 choose from computer…');
+  up.onclick = () => file.click();
+  panel.append(up, file);
+  return panel;
+}
+
 // the home view: today's wellness at a glance — sunrise/sunset (from /location)
 // and last night's Oura sleep. Setup happens inline, no popups (so it works in
 // the Mac app's WKWebView, where window.prompt is a no-op). This used to live
 // in the sidebar; it now has its own page.
 function renderHome() {
+  renderHomeBanner();
   const box = $('home-body');
   if (!box) return;
   box.replaceChildren();
   const sun = S.sun || { located: false };
   const oura = S.oura || { connected: false };
+
+  // ── GitHub-style "tasks completed" contribution grid ──
+  box.append(mkActivityCard());
 
   const grid = el('div', 'home-grid');
 

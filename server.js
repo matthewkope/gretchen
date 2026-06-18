@@ -300,6 +300,20 @@ const routes = {
     };
   },
 
+  // completions per day (for the home contribution grid): scans both the
+  // live task files and the archive, keying on each task's ✅ done date.
+  'GET /api/activity'() {
+    const counts = {};
+    const tally = (t) => {
+      if (!t.done) return;
+      const d = t.doneDate || today();
+      counts[d] = (counts[d] || 0) + 1;
+    };
+    for (const t of loadAllTasks()) tally(t);
+    for (const t of loadArchive()) tally(t);
+    return { counts, today: today() };
+  },
+
   'POST /api/unarchive'({ index }) {
     const archive = loadArchive();
     const i = Number(index);
