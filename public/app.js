@@ -482,7 +482,7 @@ function endEdit() {
   closePrompt();
 }
 
-// the add-task bar is an overlay: ⇧N (or the /e revise flow) opens it, esc /
+// the add-task bar is an overlay: ⌘N (or the /e revise flow) opens it, esc /
 // submitting closes it, and the rest of the board dims behind a backdrop.
 function openPrompt() {
   $('promptwrap').classList.remove('hidden');
@@ -492,6 +492,15 @@ function openPrompt() {
 function closePrompt() {
   $('promptwrap').classList.add('hidden');
   document.activeElement?.blur(); // drop focus so board / view keys work again
+}
+function promptOpen() {
+  return !$('promptwrap').classList.contains('hidden');
+}
+// the add-task hotkey is a toggle: open the bar, or close it (discarding any
+// in-progress edit) if it's already showing.
+function togglePrompt() {
+  if (promptOpen()) endEdit();
+  else openPrompt();
 }
 
 /* ── timer ─────────────────────────────────────────────────────────── */
@@ -685,7 +694,7 @@ function submitPrompt() {
   }
   let submit;
   if (editing != null) submit = api('/api/op', { op: 'edit', index: editing, project, arg: v });
-  // ⇧N inside the kanban view drops the card into the leftmost list, not the inbox
+  // adding from the kanban view drops the card into the leftmost list, not the inbox
   else if (view === 'kanban' && kanban?.columns?.length) submit = api('/api/kanban', { action: 'add-card', col: 0, text: v });
   else submit = api('/api/input', { text: v, project });
   endEdit();
@@ -710,9 +719,9 @@ $('prompt').addEventListener('input', () => {
    Drag a card between columns to change its status; drag column headers to
    reorder. Cards reuse the board's tag colouring + date span. */
 let kanban = null;          // last GET /api/kanban
-let kanCardDrag = null;     // { col, i } of the card being dragged (native HTML5 drag)
+let kanCardDrag = null;     // { col, i } of the card being dragged
 let kanCardDragEl = null;   // the card element being dragged (for live reordering)
-// columns use a custom pointer drag (kanColDragStart), not these
+// columns use a custom pointer drag (kanColDragStart); cards use native HTML5 drag
 
 // Obsidian-style live drag: while a card/column is dragged, the others slide to
 // open a gap. FLIP — measure every sibling before the move, do the DOM move, then
@@ -764,12 +773,6 @@ function toggleKanCollapse(name) {
 
 function kanCardVisible(card) {
   return !tagFilter || (card.tags || []).includes(tagFilter);
-}
-function kanClearMarkers() {
-  document.querySelectorAll('.kan-card.drop-before, .kan-card.drop-after')
-    .forEach((x) => x.classList.remove('drop-before', 'drop-after'));
-  document.querySelectorAll('.kan-col.drop-into, .kan-col.col-drop-before, .kan-col.col-drop-after')
-    .forEach((x) => x.classList.remove('drop-into', 'col-drop-before', 'col-drop-after'));
 }
 function closeKanMenus() {
   document.querySelectorAll('.kan-menu').forEach((m) => m.remove());
@@ -852,7 +855,7 @@ function kanColumn(col, ci) {
   // place (cards in both the source and target column animate via FLIP). Listening
   // on the whole column — not just the list — keeps near-empty columns droppable.
   colEl.addEventListener('dragover', (e) => {
-    if (!kanCardDragEl) return; // column reordering is handled at the board level
+    if (!kanCardDragEl) return; // column reordering is handled by its own pointer drag
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     const cards = [...list.children].filter((c) => c.classList.contains('kan-card') && c !== kanCardDragEl);
@@ -924,8 +927,6 @@ function kanCard(card, ci) {
 }
 
 async function kanMoveCard(from, toCol, toI) {
-  kanCardDrag = null;
-  kanClearMarkers();
   const out = await api('/api/kanban', { action: 'move-card', col: from.col, i: from.i, toCol, toI });
   if (out.ok) refresh();
 }
@@ -1203,19 +1204,21 @@ function gotoView(v) {
 }
 document.querySelectorAll('.navbtn').forEach((b) => (b.onclick = () => gotoView(b.dataset.view)));
 
-// ── per-page hotkeys (⌘H home, ⌘K kanban, ⌘I inbox by default) ──────────
-// Each page can be bound to a letter pressed with ⌘. The map lives in
-// localStorage so it's adjustable from Settings → Page hotkeys.
-const HOTKEY_VIEWS = [
-  { view: 'home', label: 'home' },
-  { view: 'board', label: 'inbox' },
-  { view: 'calendar', label: 'calendar' },
-  { view: 'kanban', label: 'kanban' },
-  { view: 'archive', label: 'archive' },
-  { view: 'time', label: 'time log' },
-  { view: 'settings', label: 'settings' },
+// ── hotkeys (⌘H home, ⌘K kanban, ⌘I inbox, ⌘N add-task by default) ──────
+// Each action can be bound to a letter pressed with ⌘ — the page views plus
+// "add task" (which toggles the add bar). The map lives in localStorage so it's
+// adjustable from Settings → Page hotkeys.
+const HOTKEY_ACTIONS = [
+  { id: 'home', label: 'home', run: () => gotoView('home') },
+  { id: 'board', label: 'inbox', run: () => gotoView('board') },
+  { id: 'calendar', label: 'calendar', run: () => gotoView('calendar') },
+  { id: 'kanban', label: 'kanban', run: () => gotoView('kanban') },
+  { id: 'archive', label: 'archive', run: () => gotoView('archive') },
+  { id: 'time', label: 'time log', run: () => gotoView('time') },
+  { id: 'settings', label: 'settings', run: () => gotoView('settings') },
+  { id: 'newTask', label: 'add task (toggle bar)', run: () => togglePrompt() },
 ];
-const DEFAULT_HOTKEYS = { home: 'h', kanban: 'k', board: 'i' };
+const DEFAULT_HOTKEYS = { home: 'h', kanban: 'k', board: 'i', newTask: 'n' };
 function loadHotkeys() {
   try {
     const raw = JSON.parse(localStorage.getItem('gretchen-hotkeys') || 'null');
@@ -1229,17 +1232,19 @@ function saveHotkeys(map) {
   try { localStorage.setItem('gretchen-hotkeys', JSON.stringify(map)); } catch {}
 }
 
-// ⌘ + letter → jump to the bound page, from any view. Uses the capture phase so
-// it wins over view-local key handlers; preventDefault stops the browser default
-// (e.g. ⌘I). ⌘H is freed in the Mac app's menu so it reaches here too.
+// ⌘ + letter → run the bound action, from any view (even with the add bar
+// focused, so ⌘N can toggle it shut). Capture phase + stopPropagation so it wins
+// over view-local key handlers; preventDefault stops the browser default (e.g.
+// ⌘N new window). ⌘H is freed in the Mac app's menu so it reaches here too.
 document.addEventListener('keydown', (e) => {
   if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
   const key = (e.key || '').toLowerCase();
   if (key.length !== 1) return;
-  for (const v in HOTKEYS) {
-    if (HOTKEYS[v] && HOTKEYS[v].toLowerCase() === key) {
+  for (const a of HOTKEY_ACTIONS) {
+    if (HOTKEYS[a.id] && HOTKEYS[a.id].toLowerCase() === key) {
       e.preventDefault();
-      gotoView(v);
+      e.stopPropagation();
+      a.run();
       return;
     }
   }
@@ -2575,7 +2580,7 @@ const KEY_HELP = [
     { keys: ['⇧→', '⇧←'], desc: 'nest / un-nest as a sub-task' },
     { keys: ['Enter', 'Space'], desc: 'toggle done' },
     { keys: ['⌫', 'Del'], desc: 'delete the selected task' },
-    { keys: ['⇧N'], desc: 'jump to the add-task bar' },
+    { keys: ['⌘N'], desc: 'open / close the add-task bar (customizable)' },
     { keys: ['click'], desc: 'select · double-click edits in place' },
     { keys: ['drag'], desc: 'reorder a task and its sub-tasks' },
   ] },
@@ -2778,11 +2783,11 @@ function hotkeyLabel(letter) {
 }
 function renderHotkeySettings() {
   const card = el('div', 'set-card');
-  for (const { view: v, label } of HOTKEY_VIEWS) {
+  for (const { id, label } of HOTKEY_ACTIONS) {
     const row = el('div', 'set-row');
     row.append(el('span', '', label));
-    const btn = el('button', 'hotkey-btn', hotkeyLabel(HOTKEYS[v]));
-    btn.onclick = () => captureHotkey(btn, v);
+    const btn = el('button', 'hotkey-btn', hotkeyLabel(HOTKEYS[id]));
+    btn.onclick = () => captureHotkey(btn, id);
     row.append(btn);
     card.append(row);
   }
@@ -3040,12 +3045,11 @@ notifyNativeTheme(); // match the app chrome to the theme the head script applie
 /* ── board keyboard control (no modes) ─────────────────────────────────
    The inbox / project board is navigable whenever the add-bar isn't focused:
    ↑/↓ move the selection, ⇧↑/↓ reorder the selected task, ⇧→/⇧← nest/un-nest
-   it, backspace deletes it, enter/space toggles done, ⇧N jumps to the bar. */
+   it, backspace deletes it, enter/space toggles done. The add-task bar opens
+   with the configurable add-task hotkey (⌘N by default), handled above. */
 document.addEventListener('keydown', (e) => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return; // typing in a field
   const k = e.key;
-  // ⇧N opens the add-task bar from ANY view (it's a top-level overlay now)
-  if (e.shiftKey && (k === 'N' || k === 'n')) { e.preventDefault(); return openPrompt(); }
   if (view !== 'board') return; // the rest of these only steer the board
   const cur = () => visibleTasks[sel];
 
