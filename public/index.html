@@ -27,11 +27,11 @@
         <button class="navbtn active" data-view="board"><span class="navicon">📥</span> inbox</button>
         <button class="navbtn" data-view="calendar"><span class="navicon">📅</span> calendar</button>
         <button class="navbtn" data-view="kanban"><span class="navicon">📊</span> kanban</button>
+        <button class="navbtn" data-view="home"><span class="navicon">🏠</span> home</button>
         <button class="navbtn" data-view="archive"><span class="navicon">🗄️</span> archive</button>
         <button class="navbtn" data-view="time"><span class="navicon">🕐</span> time log</button>
         <button class="navbtn" data-view="settings"><span class="navicon">⚙️</span> settings</button>
       </nav>
-      <div id="wellness" class="side-section"></div>
       <div class="side-section">
         <div class="side-head collapsible" id="projects-head">
           <span class="side-head-label">projects</span>
@@ -93,6 +93,11 @@
           <span class="spacer"></span>
         </div>
         <div id="kanban-board"></div>
+      </section>
+
+      <section id="view-home" class="view hidden">
+        <h1>home</h1>
+        <div id="home-body"></div>
       </section>
 
       <section id="view-archive" class="view hidden">

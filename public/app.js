@@ -187,7 +187,7 @@ function renderSidebar() {
   }));
   if (!S.tags.length) tags.replaceChildren(el('div', 'dim', 'no tags yet'));
 
-  renderWellness();
+  if (view === 'home') renderHome(); // wellness now lives in the home view, not the sidebar
 
   const st = S.stats;
   $('stats').textContent =
@@ -645,12 +645,14 @@ async function runCommand(raw) {
   if (['oura', 'sleep', 'ring'].includes(c)) {
     if (arg === 'off') return ouraAction({ action: 'disconnect' }, 'Oura disconnected');
     if (S.oura?.connected) return ouraAction({ action: 'refresh' }, 'sleep refreshed');
-    return openOuraConnect($('wellness'), S.oura);
+    setView('home'); // wellness setup lives on the home page now
+    return openOuraConnect($('home-body'), S.oura);
   }
   if (['location', 'loc', 'sun'].includes(c)) {
     if (arg === 'clear') return locationAction({ action: 'clear' }, 'location cleared');
     if (arg) return setLocation(arg);
-    return inlineField($('wellness'), { placeholder: 'city name', onSubmit: setLocation });
+    setView('home');
+    return inlineField($('home-body'), { placeholder: 'city name', onSubmit: setLocation });
   }
   if (['exit', 'quit', 'q'].includes(c)) return toast('this is a website — just close the tab :)');
   toast(`unknown command /${cmd}`);
@@ -707,7 +709,45 @@ $('prompt').addEventListener('input', () => {
    reorder. Cards reuse the board's tag colouring + date span. */
 let kanban = null;          // last GET /api/kanban
 let kanCardDrag = null;     // { col, i } of the card being dragged
+let kanCardDragEl = null;   // the card element being dragged (for live reordering)
 let kanColDrag = null;      // index of the column being dragged
+let kanColDragEl = null;    // the column element being dragged
+
+// Obsidian-style live drag: while a card/column is dragged, the others slide to
+// open a gap. FLIP — measure every sibling before the move, do the DOM move, then
+// transform each from its old box to (0,0) with an ease. Cards move on Y, columns
+// on X, so this captures both axes. `playKanFlip` mirrors the inbox's playRectFlip.
+function captureKanRects(selector, except) {
+  const m = new Map();
+  for (const n of document.querySelectorAll(selector)) {
+    if (n === except) continue;
+    const r = n.getBoundingClientRect();
+    m.set(n, { x: r.left, y: r.top });
+  }
+  return m;
+}
+function playKanFlip(map, dur = 180) {
+  const moved = [];
+  for (const [node, prev] of map) {
+    const r = node.getBoundingClientRect();
+    const dx = prev.x - r.left, dy = prev.y - r.top;
+    if (!dx && !dy) continue;
+    node.style.transition = 'transform 0s';
+    node.style.transform = `translate(${dx}px, ${dy}px)`;
+    moved.push(node);
+  }
+  if (!moved.length) return;
+  requestAnimationFrame(() => {
+    for (const node of moved) {
+      node.style.transition = `transform ${dur}ms cubic-bezier(.2,.7,.3,1)`;
+      node.style.transform = '';
+    }
+  });
+}
+function clearKanTransforms() {
+  for (const n of document.querySelectorAll('#kanban-board .kan-card, #kanban-board .kan-col'))
+    { n.style.transition = ''; n.style.transform = ''; }
+}
 
 // collapsed lists, by name, remembered in this browser (like the theme prefs)
 let kanCollapsed = (() => {
@@ -779,14 +819,23 @@ function kanColumn(col, ci) {
   head.draggable = true;
   head.addEventListener('dragstart', (e) => {
     kanColDrag = ci;
-    colEl.classList.add('col-dragging');
+    kanColDragEl = colEl;
+    requestAnimationFrame(() => colEl.classList.add('col-dragging')); // after the drag image is grabbed
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', `col:${ci}`);
   });
   head.addEventListener('dragend', () => {
+    colEl.classList.remove('col-dragging');
+    clearKanTransforms();
+    if (kanColDrag == null) return;
+    // commit: drop before whatever column now follows the dragged one
+    let next = colEl.nextElementSibling;
+    while (next && !next.classList.contains('kan-col')) next = next.nextElementSibling;
+    const to = next ? Number(next.dataset.col) : (kanban.columns || []).length;
+    const from = kanColDrag;
     kanColDrag = null;
-    kanClearMarkers();
-    document.querySelectorAll('.kan-col.col-dragging').forEach((c) => c.classList.remove('col-dragging'));
+    kanColDragEl = null;
+    kanMoveColumn(from, to);
   });
   const collapsed = kanCollapsed.has(col.name);
   if (collapsed) colEl.classList.add('collapsed');
@@ -814,33 +863,27 @@ function kanColumn(col, ci) {
   adder.onclick = () => kanAddCard(colEl, ci);
   colEl.append(adder);
 
-  // dropping a card onto the column's empty space appends to the end
+  // Live card drag: hovering anywhere in this column slides the dragged card into
+  // place (cards in both the source and target column animate via FLIP). Listening
+  // on the whole column — not just the list — keeps near-empty columns droppable.
   colEl.addEventListener('dragover', (e) => {
-    if (kanCardDrag) {
-      if (e.target.closest('.kan-card')) return; // a card handles it precisely
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      kanClearMarkers();
-      colEl.classList.add('drop-into');
-    } else if (kanColDrag != null) {
-      e.preventDefault();
-      const r = colEl.getBoundingClientRect();
-      const after = e.clientX - r.left > r.width / 2;
-      kanClearMarkers();
-      colEl.classList.add(after ? 'col-drop-after' : 'col-drop-before');
+    if (!kanCardDragEl) return; // column reordering is handled at the board level
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const cards = [...list.children].filter((c) => c.classList.contains('kan-card') && c !== kanCardDragEl);
+    // insert before the first card whose midpoint sits below the cursor; past the
+    // last → null → append to the end of this column
+    let ref = null;
+    for (const r of cards) {
+      const box = r.getBoundingClientRect();
+      if (e.clientY < box.top + box.height / 2) { ref = r; break; }
     }
+    if (kanCardDragEl.parentElement === list && kanCardDragEl.nextElementSibling === ref) return;
+    const first = captureKanRects('#kanban-board .kan-card', kanCardDragEl); // measure before the move
+    list.insertBefore(kanCardDragEl, ref);
+    playKanFlip(first); // slide the displaced cards from their old spots
   });
-  colEl.addEventListener('drop', (e) => {
-    if (kanCardDrag && !e.target.closest('.kan-card')) {
-      e.preventDefault();
-      kanMoveCard(kanCardDrag, ci, col.cards.length);
-    } else if (kanColDrag != null) {
-      e.preventDefault();
-      const r = colEl.getBoundingClientRect();
-      const after = e.clientX - r.left > r.width / 2;
-      kanMoveColumn(kanColDrag, ci + (after ? 1 : 0));
-    }
-  });
+  colEl.addEventListener('drop', (e) => { if (kanCardDragEl) e.preventDefault(); });
 
   return colEl;
 }
@@ -867,36 +910,30 @@ function kanCard(card, ci) {
   menu.onclick = (e) => { e.stopPropagation(); kanCardMenu(ci, card, c); };
   c.append(menu);
 
-  c.draggable = true;
+  c.dataset.i = card.i; // file index in its column, read back to commit a move
+  c.draggable = !tagFilter; // under a tag filter the visible order ≠ file order, so no live reorder
   c.addEventListener('dragstart', (e) => {
     kanCardDrag = { col: ci, i: card.i };
-    c.classList.add('dragging');
+    kanCardDragEl = c;
+    requestAnimationFrame(() => c.classList.add('dragging')); // after the drag image is grabbed
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', `card:${ci}:${card.i}`);
     e.stopPropagation();
   });
   c.addEventListener('dragend', () => {
+    c.classList.remove('dragging');
+    clearKanTransforms();
+    if (!kanCardDrag) return;
+    // commit where the card now sits: drop before the card that follows it, or
+    // append (column length) when it's last
+    const targetCol = Number(c.closest('.kan-col').dataset.col);
+    let next = c.nextElementSibling;
+    while (next && !next.classList.contains('kan-card')) next = next.nextElementSibling;
+    const toI = next ? Number(next.dataset.i) : (kanban.columns[targetCol]?.cards.length ?? 0);
+    const from = kanCardDrag;
     kanCardDrag = null;
-    kanClearMarkers();
-    document.querySelectorAll('.kan-card.dragging').forEach((x) => x.classList.remove('dragging'));
-  });
-  c.addEventListener('dragover', (e) => {
-    if (!kanCardDrag) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-    const r = c.getBoundingClientRect();
-    const after = e.clientY - r.top > r.height / 2;
-    kanClearMarkers();
-    c.classList.add(after ? 'drop-after' : 'drop-before');
-  });
-  c.addEventListener('drop', (e) => {
-    if (!kanCardDrag) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const r = c.getBoundingClientRect();
-    const after = e.clientY - r.top > r.height / 2;
-    kanMoveCard(kanCardDrag, ci, card.i + (after ? 1 : 0));
+    kanCardDragEl = null;
+    kanMoveCard(from, targetCol, toI);
   });
   return c;
 }
@@ -942,6 +979,16 @@ function attachSmartInput(input, { onSubmit, onCancel } = {}) {
       menu.append(row);
     });
     wrap.append(menu);
+    // the board clips overflow, so place the menu on whichever side of the input
+    // has more room and cap its height to fit — never spilling past the board edge
+    const board = document.getElementById('kanban-board');
+    const br = board ? board.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    const ir = input.getBoundingClientRect();
+    const below = br.bottom - ir.bottom - 8;
+    const above = ir.top - br.top - 8;
+    const up = menu.offsetHeight > below && above > below;
+    menu.classList.toggle('up', up);
+    menu.style.maxHeight = `${Math.min(220, Math.max(60, up ? above : below))}px`;
   };
 
   function compute() {
@@ -1077,6 +1124,7 @@ function setView(v) {
   if (v === 'archive') renderArchive();
   if (v === 'calendar') renderCalendar();
   if (v === 'kanban') renderKanban();
+  if (v === 'home') renderHome();
   if (v === 'time') renderTime();
   if (v === 'settings') renderSettings();
   document.activeElement?.blur(); // no field focused, so board ↑/↓ and view keys work
@@ -1141,6 +1189,29 @@ $('tasks').addEventListener('dragover', (e) => {
   playRectFlip(first); // slide the displaced rows from their old spot to the new one
 });
 $('tasks').addEventListener('drop', (e) => { if (dragEl != null) e.preventDefault(); });
+
+// Live column drag: while a list is dragged the others slide left/right to open a
+// gap (FLIP on X). Attached once to the persistent board; commit happens on the
+// header's dragend. Mirrors the inbox row reorder, one axis over.
+$('kanban-board').addEventListener('dragover', (e) => {
+  if (kanColDragEl == null) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const board = $('kanban-board');
+  const cols = [...board.children].filter((c) => c.classList.contains('kan-col') && c !== kanColDragEl);
+  // insert before the first column whose horizontal midpoint is right of the cursor
+  let ref = null;
+  for (const c of cols) {
+    const box = c.getBoundingClientRect();
+    if (e.clientX < box.left + box.width / 2) { ref = c; break; }
+  }
+  if (ref == null) ref = board.querySelector('.kan-addcol'); // keep the dragged list left of "+ Add list"
+  if (kanColDragEl.nextElementSibling === ref) return;
+  const first = captureKanRects('#kanban-board .kan-col', kanColDragEl); // measure before the move
+  board.insertBefore(kanColDragEl, ref);
+  playKanFlip(first); // slide the displaced lists across
+});
+$('kanban-board').addEventListener('drop', (e) => { if (kanColDragEl != null) e.preventDefault(); });
 
 $('new-project').onclick = newProjectPrompt;
 
@@ -1394,9 +1465,8 @@ async function renderArchive() {
 }
 
 /* time — summary, the CSV (newest first), Toggl import email */
-// sidebar wellness block: sunrise/sunset (from /location) and last night's
-// Oura sleep. Display always visible; setup happens inline, no popups (so it
-// works in the Mac app's WKWebView, where window.prompt is a no-op).
+// inline setup field (location / Oura token). Setup happens inline, no popups
+// (so it works in the Mac app's WKWebView, where window.prompt is a no-op).
 function inlineField(host, { placeholder, type, onSubmit }) {
   const row = el('div', 'well-input');
   const input = el('input');
@@ -1406,67 +1476,76 @@ function inlineField(host, { placeholder, type, onSubmit }) {
   input.onkeydown = (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') { const v = input.value.trim(); if (v) onSubmit(v); }
-    else if (e.key === 'Escape') renderSidebar();
+    else if (e.key === 'Escape') renderHome();
   };
   row.append(input);
   host.append(row);
   input.focus();
 }
 
-function renderWellness() {
-  const box = $('wellness');
+// the home view: today's wellness at a glance — sunrise/sunset (from /location)
+// and last night's Oura sleep. Setup happens inline, no popups (so it works in
+// the Mac app's WKWebView, where window.prompt is a no-op). This used to live
+// in the sidebar; it now has its own page.
+function renderHome() {
+  const box = $('home-body');
   if (!box) return;
   box.replaceChildren();
-  box.append(el('div', 'side-head', 'today'));
   const sun = S.sun || { located: false };
   const oura = S.oura || { connected: false };
 
+  const grid = el('div', 'home-grid');
+
   // ── sunrise / sunset ──
-  const sunRow = el('div', 'well-row');
+  const sunCard = el('div', 'home-card');
+  sunCard.append(el('div', 'home-card-head', 'sunrise & sunset'));
   if (sun.located && sun.sunrise) {
-    sunRow.append(el('span', 'well-main', `☀ ${sun.sunrise}  →  ☾ ${sun.sunset}`));
-    const tools = el('span', 'well-tools');
-    tools.append(mkWellTool('✎', 'change city', () => inlineField(box, { placeholder: 'city name', onSubmit: setLocation })));
+    sunCard.append(el('div', 'home-big', `☀ ${sun.sunrise}  →  ☾ ${sun.sunset}`));
+    if (sun.place) sunCard.append(el('div', 'well-sub dim', sun.place));
+    const tools = el('div', 'well-tools');
+    tools.append(mkWellTool('✎', 'change city', () => inlineField(sunCard, { placeholder: 'city name', onSubmit: setLocation })));
     tools.append(mkWellTool('×', 'clear location', () => locationAction({ action: 'clear' }, 'location cleared')));
-    sunRow.append(tools);
-    sunRow.append(el('div', 'well-sub dim', sun.place));
+    sunCard.append(tools);
   } else if (sun.located) {
-    sunRow.append(el('span', 'dim', 'polar day/night — no sunrise today'));
+    sunCard.append(el('div', 'dim', 'polar day/night — no sunrise today'));
   } else {
     const add = el('button', 'well-add', '+ set location for sunrise/sunset');
-    add.onclick = () => inlineField(box, { placeholder: 'city name, e.g. Falls Church', onSubmit: setLocation });
-    sunRow.append(add);
+    add.onclick = () => inlineField(sunCard, { placeholder: 'city name, e.g. Falls Church', onSubmit: setLocation });
+    sunCard.append(add);
   }
-  box.append(sunRow);
+  grid.append(sunCard);
 
   // ── Oura sleep ──
-  const sleepRow = el('div', 'well-row');
+  const sleepCard = el('div', 'home-card');
+  sleepCard.append(el('div', 'home-card-head', 'last night'));
   if (!oura.connected) {
     const add = el('button', 'well-add', '+ connect Oura sleep');
-    add.onclick = () => openOuraConnect(box, oura);
-    sleepRow.append(add);
+    add.onclick = () => openOuraConnect(sleepCard, oura);
+    sleepCard.append(add);
   } else if (oura.data) {
     const d = oura.data;
-    const head = el('div', 'well-main');
+    const head = el('div', 'home-big');
     head.append(el('span', 'sleep-score', `😴 ${d.score ?? '–'}`));
     head.append(el('span', 'ready-score', `  ⚡ ${d.readiness ?? '–'}`));
-    const tools = el('span', 'well-tools');
-    tools.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
-    if (!oura.env) tools.append(mkWellTool('×', 'disconnect Oura', () => ouraAction({ action: 'disconnect' }, 'Oura disconnected')));
-    head.append(tools);
-    sleepRow.append(head);
-    if (d.duration) sleepRow.append(el('div', 'well-sub dim', `${d.duration} slept`));
+    sleepCard.append(head);
+    if (d.duration) sleepCard.append(el('div', 'well-sub dim', `${d.duration} slept`));
     if (d.bedtime) {
       const bed = el('div', 'well-sub');
       bed.append(el('span', 'bedtime', `🛏 bed by ${d.bedtime}`));
-      sleepRow.append(bed);
+      sleepCard.append(bed);
     }
-    if (d.day) sleepRow.append(el('div', 'well-sub dim', d.day));
+    if (d.day) sleepCard.append(el('div', 'well-sub dim', d.day));
+    const tools = el('div', 'well-tools');
+    tools.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
+    if (!oura.env) tools.append(mkWellTool('×', 'disconnect Oura', () => ouraAction({ action: 'disconnect' }, 'Oura disconnected')));
+    sleepCard.append(tools);
   } else {
-    sleepRow.append(el('span', 'dim', 'sleep — syncing… '));
-    sleepRow.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
+    sleepCard.append(el('div', 'dim', 'sleep — syncing… '));
+    sleepCard.append(mkWellTool('↻', 'refresh from Oura', () => ouraAction({ action: 'refresh' }, 'sleep refreshed')));
   }
-  box.append(sleepRow);
+  grid.append(sleepCard);
+
+  box.append(grid);
 }
 
 function mkWellTool(label, tip, fn) {
@@ -1485,7 +1564,7 @@ function openOuraConnect(box, oura) {
   input.onkeydown = (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') connectOura(input.value);
-    else if (e.key === 'Escape') renderSidebar();
+    else if (e.key === 'Escape') renderHome();
   };
   const link = el('a', 'toggl-link', 'get token ↗');
   link.href = (oura && oura.tokenUrl) || 'https://cloud.ouraring.com/personal-access-tokens';
