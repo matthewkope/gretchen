@@ -13,7 +13,7 @@ import {
   loadTasks, saveTasks, loadAllTasks, loadArchive, saveArchive, archiveTask,
   archiveSections, parseInput, sortTasks, taskBlocks, getTags, today,
   dateSuggestions, listProjects, projectExists, slugifyProject, PRIORITIES,
-  SORT_KEYS, loadBoard, saveBoard,
+  SORT_KEYS, loadBoard, saveBoard, loadSprint, saveSprint, startNewSprint,
 } from './lib/store.js';
 import {
   logEntry, timeStats, localEntries, aggregateWeek, weekRange,
@@ -572,13 +572,14 @@ const routes = {
     return { ok: true, path: file };
   },
 
-  // the standalone kanban board (kanban.md): columns + cards
+  // the standalone kanban board (kanban.md): columns + cards + the sprint header
   'GET /api/kanban'() {
     return {
       columns: loadBoard().map((c) => ({
         name: c.name,
         cards: c.cards.map((t, i) => ({ ...t, i, tags: getTags(t) })),
       })),
+      sprint: loadSprint(),
     };
   },
 
@@ -659,6 +660,20 @@ const routes = {
         to = Math.max(0, Math.min(to, board.length));
         board.splice(to, 0, c);
         break;
+      }
+      // sprint header: patch the goal/dates/number in the frontmatter
+      case 'set-sprint': {
+        const patch = {};
+        if (b.goal != null) patch.goal = String(b.goal).trim();
+        if (b.start != null) patch.start = String(b.start).trim();
+        if (b.end != null) patch.end = String(b.end).trim();
+        if (b.number != null && Number(b.number) > 0) patch.number = Number(b.number);
+        return { ok: true, sprint: saveSprint(patch) };
+      }
+      // start the next sprint: archive Done, roll the rest forward, bump + restamp
+      case 'new-sprint': {
+        const out = startNewSprint({ goal: b.goal || '', start: b.start, end: b.end });
+        return { ok: true, ...out };
       }
       default:
         return { error: `unknown action ${b.action}` };

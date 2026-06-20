@@ -791,6 +791,8 @@ async function renderKanban() {
     fc.style.color = (tagFilter && tagColor(tagFilter)) || '';
   }
 
+  renderSprintHeader(kanban.sprint);
+
   board.replaceChildren(...cols.map((col, ci) => kanColumn(col, ci)));
 
   // + Add list
@@ -813,6 +815,81 @@ async function renderKanban() {
   };
   addCol.append(addBtn);
   board.append(addCol);
+}
+
+// ── sprint header: number · goal (click to edit) · dates + day-of-sprint ──
+const SPRINT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function sprintShortDate(s) {
+  const [y, m, d] = (s || '').split('-').map(Number);
+  return y ? `${SPRINT_MONTHS[m - 1]} ${d}` : s;
+}
+function sprintProgress(sprint) {
+  const day0 = (s) => new Date(`${s}T00:00:00`);
+  const start = day0(sprint.start), end = day0(sprint.end), now = day0(iso(new Date()));
+  const D = 86400000;
+  const total = Math.max(1, Math.round((end - start) / D) + 1); // inclusive
+  const day = Math.round((now - start) / D) + 1;
+  const remaining = Math.round((end - now) / D);
+  return { total, day: Math.min(total, Math.max(1, day)), remaining, ended: now > end, notStarted: now < start };
+}
+
+function renderSprintHeader(sprint) {
+  const box = $('kanban-sprint');
+  if (!box) return;
+  if (!sprint) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const num = el('span', 'sprint-num', `Sprint ${sprint.number}`);
+
+  const goal = el('span', 'sprint-goal', sprint.goal || 'set a sprint goal…');
+  if (!sprint.goal) goal.classList.add('empty');
+  goal.title = 'click to edit the sprint goal';
+  goal.onclick = () => {
+    const input = el('input', 'sprint-goal-input');
+    input.value = sprint.goal || '';
+    input.placeholder = 'sprint goal';
+    const save = async () => {
+      const out = await api('/api/kanban', { action: 'set-sprint', goal: input.value });
+      out.ok ? renderKanban() : renderKanban();
+    };
+    input.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); save(); }
+      else if (e.key === 'Escape') { e.preventDefault(); renderKanban(); }
+    };
+    input.onblur = save;
+    goal.replaceWith(input);
+    input.focus(); input.select();
+  };
+
+  const p = sprintProgress(sprint);
+  const dates = el('span', 'sprint-dates', `${sprintShortDate(sprint.start)} – ${sprintShortDate(sprint.end)}`);
+  dates.title = 'click to change the sprint dates';
+  dates.onclick = () => {
+    const wrap = el('span', 'sprint-dates-edit');
+    const s = el('input'); s.type = 'date'; s.value = sprint.start;
+    const e = el('input'); e.type = 'date'; e.value = sprint.end;
+    const save = async () => {
+      if (!s.value || !e.value) return;
+      const out = await api('/api/kanban', { action: 'set-sprint', start: s.value, end: e.value });
+      if (out.ok) renderKanban();
+    };
+    const key = (ev) => { ev.stopPropagation(); if (ev.key === 'Escape') renderKanban(); };
+    s.onchange = e.onchange = save;
+    s.onkeydown = e.onkeydown = key;
+    wrap.append(s, el('span', 'sprint-dash', '–'), e);
+    dates.replaceWith(wrap);
+    s.focus();
+  };
+
+  const status = p.notStarted
+    ? 'starts soon'
+    : p.ended
+    ? 'sprint ended'
+    : `Day ${p.day}/${p.total}${p.remaining >= 0 ? ` · ${p.remaining}d left` : ''}`;
+  const prog = el('span', `sprint-progress${p.ended ? ' ended' : ''}`, status);
+
+  box.replaceChildren(num, goal, el('span', 'spacer'), dates, prog);
 }
 
 function kanColumn(col, ci) {
@@ -1378,6 +1455,18 @@ $('tasks').addEventListener('dragover', (e) => {
 $('tasks').addEventListener('drop', (e) => { if (dragEl != null) e.preventDefault(); });
 
 $('new-project').onclick = newProjectPrompt;
+
+// Start a new sprint: archive Done, roll the rest forward, bump the number
+$('kanban-newsprint').onclick = async () => {
+  const next = (kanban?.sprint?.number || 1) + 1;
+  if (!confirm(`Start Sprint ${next}?\n\nThis archives the Done column and carries the remaining cards into the new sprint.`)) return;
+  const out = await api('/api/kanban', { action: 'new-sprint' });
+  if (out.ok) {
+    const n = out.archived;
+    toast(`Sprint ${out.sprint.number} started — archived ${n} card${n === 1 ? '' : 's'}${out.doneColumn ? ` from ${out.doneColumn}` : ''}`);
+    refresh();
+  }
+};
 
 /* calendar — month/week/day views over every project's dated tasks,
    with the CLI's keys: m/w/d, tab/v cycles, enter zooms, arrows move a day,

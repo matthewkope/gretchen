@@ -274,6 +274,26 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 /* ── kanban (Obsidian-Kanban-style: centred board, elevated cards) ────── */
 #kanban-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 #kanban-filter { color: var(--yellow); }
+#kanban-newsprint { font-size: 12px; }
+
+/* sprint header: number · goal (click to edit) · dates + day-of-sprint */
+#kanban-sprint {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+  padding: 7px 12px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px;
+}
+.sprint-num { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.sprint-goal { cursor: text; border-bottom: 1px dashed transparent; }
+.sprint-goal:hover { border-bottom-color: var(--border); }
+.sprint-goal.empty { color: var(--dim); font-style: italic; }
+.sprint-goal-input { min-width: 220px; flex: 1; }
+.sprint-dates { color: var(--dim); cursor: pointer; white-space: nowrap; }
+.sprint-dates:hover { color: var(--fg); }
+.sprint-dates-edit { display: inline-flex; align-items: center; gap: 6px; }
+.sprint-dates-edit input { padding: 1px 4px; }
+.sprint-dash { color: var(--dim); }
+.sprint-progress { color: var(--green); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sprint-progress.ended { color: var(--red); }
 #kanban-board {
   flex: 1; display: flex; gap: 12px; align-items: flex-start;
   justify-content: safe center; /* centre the lists; left-align (no clipping) when they overflow */
