@@ -274,8 +274,10 @@ function prefersReducedMotion() {
 // (location) it lives in, and jumps to the board when clicked
 function renderKanbanRow(card) {
   const row = el('div', 'task kanban-src');
-  const loc = el('span', 'kanban-badge', `📊 ${card.column}`);
-  loc.title = 'on the kanban board';
+  // show the board (sprint) it's on too, since cards can live on several boards
+  const where = card.boardName ? `${card.boardName} · ${card.column}` : card.column;
+  const loc = el('span', 'kanban-badge', `📊 ${where}`);
+  loc.title = 'on a kanban board';
   const title = el('span', 'title');
   for (const part of card.title.split(/(#[\w/-]+)/g)) {
     if (part.startsWith('#')) {
@@ -290,7 +292,7 @@ function renderKanbanRow(card) {
   row.append(loc, title);
   const d = dateSpan(card);
   if (d) row.append(d);
-  row.onclick = () => { setView('kanban'); render(); };
+  row.onclick = () => { if (card.board) setKanBoard(card.board); setView('kanban'); render(); };
   return row;
 }
 
@@ -695,7 +697,7 @@ function submitPrompt() {
   let submit;
   if (editing != null) submit = api('/api/op', { op: 'edit', index: editing, project, arg: v });
   // adding from the kanban view drops the card into the leftmost list, not the inbox
-  else if (view === 'kanban' && kanban?.columns?.length) submit = api('/api/kanban', { action: 'add-card', col: 0, text: v });
+  else if (view === 'kanban' && kanban?.columns?.length) submit = kanApi({ action: 'add-card', col: 0, text: v });
   else submit = api('/api/input', { text: v, project });
   endEdit();
   submit.then(() => refresh());
@@ -719,6 +721,14 @@ $('prompt').addEventListener('input', () => {
    Drag a card between columns to change its status; drag column headers to
    reorder. Cards reuse the board's tag colouring + date span. */
 let kanban = null;          // last GET /api/kanban
+// the active sprint board (slug), remembered across reloads
+let kanBoard = (() => { try { return localStorage.getItem('gretchen-kanban-board') || 'default'; } catch { return 'default'; } })();
+function setKanBoard(slug) {
+  kanBoard = slug || 'default';
+  try { localStorage.setItem('gretchen-kanban-board', kanBoard); } catch {}
+}
+// every kanban mutation is scoped to the active board
+function kanApi(body) { return kanApi({ board: kanBoard, ...body }); }
 let kanCardDrag = null;     // { col, i } of the card being dragged
 let kanCardDragEl = null;   // the card element being dragged (for live reordering)
 // columns use a custom pointer drag (kanColDragStart); cards use native HTML5 drag
@@ -781,7 +791,8 @@ function closeKanMenus() {
 async function renderKanban() {
   const board = $('kanban-board');
   if (!board) return;
-  kanban = await api('/api/kanban');
+  kanban = await api(`/api/kanban?board=${encodeURIComponent(kanBoard)}`);
+  setKanBoard(kanban.board); // server falls back to the default board if the slug is gone
   const cols = kanban.columns || [];
 
   const fc = $('kanban-filter');
@@ -791,6 +802,7 @@ async function renderKanban() {
     fc.style.color = (tagFilter && tagColor(tagFilter)) || '';
   }
 
+  renderBoardTabs(kanban.boards || []);
   renderSprintHeader(kanban.sprint);
 
   board.replaceChildren(...cols.map((col, ci) => kanColumn(col, ci)));
@@ -805,7 +817,7 @@ async function renderKanban() {
       e.stopPropagation();
       if (e.key === 'Enter') {
         const name = input.value.trim();
-        if (name) { const out = await api('/api/kanban', { action: 'add-column', name }); if (out.ok) return refresh(); }
+        if (name) { const out = await kanApi({ action: 'add-column', name }); if (out.ok) return refresh(); }
         renderKanban();
       } else if (e.key === 'Escape') renderKanban();
     };
@@ -817,7 +829,33 @@ async function renderKanban() {
   board.append(addCol);
 }
 
-// ── sprint header: number · goal (click to edit) · dates + day-of-sprint ──
+// ── board tabs: one per sprint board, plus "+ board" to create a new one ──
+function sprintLabel(sprint) {
+  return (sprint?.name || '').trim() || `Sprint ${sprint?.number || 1}`;
+}
+function renderBoardTabs(boards) {
+  const bar = $('kanban-tabs');
+  if (!bar) return;
+  bar.replaceChildren();
+  for (const b of boards) {
+    const tab = el('button', `kan-tab${b.slug === kanBoard ? ' active' : ''}`, b.name);
+    tab.title = `${b.name} — ${b.sprint?.start || ''} → ${b.sprint?.end || ''}`;
+    tab.onclick = () => { if (b.slug !== kanBoard) { setKanBoard(b.slug); renderKanban(); } };
+    bar.append(tab);
+  }
+  const add = el('button', 'kan-tab kan-tab-add', '＋ board');
+  add.title = 'create a new sprint board';
+  add.onclick = newBoardPrompt;
+  bar.append(add);
+}
+async function newBoardPrompt() {
+  const name = (prompt('Name the new sprint board (e.g. “Sprint 12” or “Auth revamp”):') || '').trim();
+  if (!name) return;
+  const out = await kanApi({ action: 'add-board', name });
+  if (out.ok && out.slug) { setKanBoard(out.slug); renderKanban(); }
+}
+
+// ── sprint header: name · goal · dates + length + day-of-sprint ──
 const SPRINT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function sprintShortDate(s) {
   const [y, m, d] = (s || '').split('-').map(Number);
@@ -832,52 +870,58 @@ function sprintProgress(sprint) {
   const remaining = Math.round((end - now) / D);
   return { total, day: Math.min(total, Math.max(1, day)), remaining, ended: now > end, notStarted: now < start };
 }
+// inline edit a single set-sprint text field (name / goal)
+function editSprintField(span, field, value, placeholder) {
+  const input = el('input', 'sprint-edit-input');
+  input.value = value || '';
+  input.placeholder = placeholder;
+  let saved = false;
+  const save = async () => { if (saved) return; saved = true; const out = await kanApi({ action: 'set-sprint', [field]: input.value }); renderKanban(); };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    else if (e.key === 'Escape') { e.preventDefault(); saved = true; renderKanban(); }
+  };
+  input.onblur = save;
+  span.replaceWith(input);
+  input.focus(); input.select();
+}
 
 function renderSprintHeader(sprint) {
   const box = $('kanban-sprint');
   if (!box) return;
   if (!sprint) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
+  const p = sprintProgress(sprint);
 
-  const num = el('span', 'sprint-num', `Sprint ${sprint.number}`);
+  // name (click to rename) + the sprint number when it has a custom name
+  const name = el('span', 'sprint-name', sprintLabel(sprint));
+  name.title = 'click to rename this sprint';
+  name.onclick = () => editSprintField(name, 'name', sprint.name, 'sprint name');
+  const seq = sprint.name ? el('span', 'sprint-seq', `#${sprint.number}`) : null;
 
   const goal = el('span', 'sprint-goal', sprint.goal || 'set a sprint goal…');
   if (!sprint.goal) goal.classList.add('empty');
   goal.title = 'click to edit the sprint goal';
-  goal.onclick = () => {
-    const input = el('input', 'sprint-goal-input');
-    input.value = sprint.goal || '';
-    input.placeholder = 'sprint goal';
-    const save = async () => {
-      const out = await api('/api/kanban', { action: 'set-sprint', goal: input.value });
-      out.ok ? renderKanban() : renderKanban();
-    };
-    input.onkeydown = (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') { e.preventDefault(); save(); }
-      else if (e.key === 'Escape') { e.preventDefault(); renderKanban(); }
-    };
-    input.onblur = save;
-    goal.replaceWith(input);
-    input.focus(); input.select();
-  };
+  goal.onclick = () => editSprintField(goal, 'goal', sprint.goal, 'sprint goal');
 
-  const p = sprintProgress(sprint);
-  const dates = el('span', 'sprint-dates', `${sprintShortDate(sprint.start)} – ${sprintShortDate(sprint.end)}`);
-  dates.title = 'click to change the sprint dates';
+  // dates + length; editing length recomputes the end date from the start
+  const dates = el('span', 'sprint-dates', `${sprintShortDate(sprint.start)} – ${sprintShortDate(sprint.end)} · ${p.total}d`);
+  dates.title = 'click to set the dates and length';
   dates.onclick = () => {
     const wrap = el('span', 'sprint-dates-edit');
     const s = el('input'); s.type = 'date'; s.value = sprint.start;
     const e = el('input'); e.type = 'date'; e.value = sprint.end;
-    const save = async () => {
-      if (!s.value || !e.value) return;
-      const out = await api('/api/kanban', { action: 'set-sprint', start: s.value, end: e.value });
-      if (out.ok) renderKanban();
-    };
+    const len = el('input', 'sprint-len'); len.type = 'number'; len.min = '1'; len.value = String(p.total);
+    const endFromLen = () => { const d = new Date(`${s.value}T00:00:00`); d.setDate(d.getDate() + Math.max(1, Number(len.value) || 1) - 1); e.value = iso(d); };
+    const lenFromDates = () => { const a = new Date(`${s.value}T00:00:00`), b = new Date(`${e.value}T00:00:00`); len.value = String(Math.max(1, Math.round((b - a) / 86400000) + 1)); };
+    const save = async () => { if (!s.value || !e.value) return; const out = await kanApi({ action: 'set-sprint', start: s.value, end: e.value }); if (out.ok) renderKanban(); };
+    s.onchange = () => { endFromLen(); save(); };       // moving the start keeps the length
+    len.onchange = () => { endFromLen(); save(); };      // setting a length moves the end
+    e.onchange = () => { lenFromDates(); save(); };      // setting the end recomputes the length
     const key = (ev) => { ev.stopPropagation(); if (ev.key === 'Escape') renderKanban(); };
-    s.onchange = e.onchange = save;
-    s.onkeydown = e.onkeydown = key;
-    wrap.append(s, el('span', 'sprint-dash', '–'), e);
+    s.onkeydown = e.onkeydown = len.onkeydown = key;
+    wrap.append(s, el('span', 'sprint-dash', '–'), e, len, el('span', 'sprint-len-unit', 'days'));
     dates.replaceWith(wrap);
     s.focus();
   };
@@ -889,7 +933,19 @@ function renderSprintHeader(sprint) {
     : `Day ${p.day}/${p.total}${p.remaining >= 0 ? ` · ${p.remaining}d left` : ''}`;
   const prog = el('span', `sprint-progress${p.ended ? ' ended' : ''}`, status);
 
-  box.replaceChildren(num, goal, el('span', 'spacer'), dates, prog);
+  const kids = [name, seq, goal, el('span', 'spacer'), dates, prog].filter(Boolean);
+  // a non-default board can be deleted
+  if (kanBoard !== 'default') {
+    const del = el('button', 'sprint-del', '🗑');
+    del.title = 'delete this sprint board';
+    del.onclick = async () => {
+      if (!confirm(`Delete the “${sprintLabel(sprint)}” board?\n\nIts cards are removed — archive the Done column first if you want to keep them.`)) return;
+      const out = await kanApi({ action: 'delete-board' });
+      if (out.ok) { setKanBoard('default'); renderKanban(); }
+    };
+    kids.push(del);
+  }
+  box.replaceChildren(...kids);
 }
 
 function kanColumn(col, ci) {
@@ -1004,11 +1060,11 @@ function kanCard(card, ci) {
 }
 
 async function kanMoveCard(from, toCol, toI) {
-  const out = await api('/api/kanban', { action: 'move-card', col: from.col, i: from.i, toCol, toI });
+  const out = await kanApi({ action: 'move-card', col: from.col, i: from.i, toCol, toI });
   if (out.ok) refresh();
 }
 async function kanMoveColumn(from, to) {
-  const out = await api('/api/kanban', { action: 'move-column', from, to });
+  const out = await kanApi({ action: 'move-column', from, to });
   if (out.ok) refresh();
 }
 
@@ -1176,7 +1232,7 @@ function kanAddCard(colEl, ci) {
   input.onblur = () => renderKanban();
   colEl.querySelector('.kan-add').replaceWith(input);
   attachSmartInput(input, {
-    onSubmit: async (text) => { const out = await api('/api/kanban', { action: 'add-card', col: ci, text }); if (out.ok) refresh(); else renderKanban(); },
+    onSubmit: async (text) => { const out = await kanApi({ action: 'add-card', col: ci, text }); if (out.ok) refresh(); else renderKanban(); },
     onCancel: () => renderKanban(),
   });
   input.focus();
@@ -1189,7 +1245,7 @@ function kanRename(colEl, ci, current) {
     e.stopPropagation();
     if (e.key === 'Enter') {
       const name = input.value.trim();
-      if (name && name !== current) { const out = await api('/api/kanban', { action: 'rename-column', col: ci, name }); if (out.ok) return refresh(); }
+      if (name && name !== current) { const out = await kanApi({ action: 'rename-column', col: ci, name }); if (out.ok) return refresh(); }
       renderKanban();
     } else if (e.key === 'Escape') renderKanban();
   };
@@ -1208,7 +1264,7 @@ function kanColMenu(ci, col, anchor) {
   del.onclick = async () => {
     closeKanMenus();
     if (col.cards.length && !confirm(`Delete "${col.name}" and its ${col.cards.length} card(s)?`)) return;
-    const out = await api('/api/kanban', { action: 'delete-column', col: ci, force: true });
+    const out = await kanApi({ action: 'delete-column', col: ci, force: true });
     if (out.ok) refresh();
   };
   m.append(rename);
@@ -1217,7 +1273,7 @@ function kanColMenu(ci, col, anchor) {
     const arch = el('button', '', `Archive cards (${col.cards.length})`);
     arch.onclick = async () => {
       closeKanMenus();
-      const out = await api('/api/kanban', { action: 'archive-column', col: ci });
+      const out = await kanApi({ action: 'archive-column', col: ci });
       if (out.ok) { toast(`archived ${out.count} card${out.count === 1 ? '' : 's'}`); refresh(); }
     };
     m.append(arch);
@@ -1233,7 +1289,7 @@ function kanCardMenu(ci, card, cardEl) {
   const edit = el('button', '', 'Edit');
   edit.onclick = () => { closeKanMenus(); kanEditCard(ci, card, cardEl); };
   const del = el('button', 'danger', 'Delete');
-  del.onclick = async () => { closeKanMenus(); const out = await api('/api/kanban', { action: 'delete-card', col: ci, i: card.i }); if (out.ok) refresh(); };
+  del.onclick = async () => { closeKanMenus(); const out = await kanApi({ action: 'delete-card', col: ci, i: card.i }); if (out.ok) refresh(); };
   m.append(edit, del);
   cardEl.append(m);
   setTimeout(() => document.addEventListener('click', closeKanMenus, { once: true }), 0);
@@ -1245,7 +1301,7 @@ function kanEditCard(ci, card, cardEl) {
   input.onblur = () => renderKanban();
   cardEl.replaceChildren(input);
   attachSmartInput(input, {
-    onSubmit: async (text) => { const out = await api('/api/kanban', { action: 'edit-card', col: ci, i: card.i, text }); if (out.ok) refresh(); else renderKanban(); },
+    onSubmit: async (text) => { const out = await kanApi({ action: 'edit-card', col: ci, i: card.i, text }); if (out.ok) refresh(); else renderKanban(); },
     onCancel: () => renderKanban(),
   });
   input.focus();
@@ -1460,7 +1516,7 @@ $('new-project').onclick = newProjectPrompt;
 $('kanban-newsprint').onclick = async () => {
   const next = (kanban?.sprint?.number || 1) + 1;
   if (!confirm(`Start Sprint ${next}?\n\nThis archives the Done column and carries the remaining cards into the new sprint.`)) return;
-  const out = await api('/api/kanban', { action: 'new-sprint' });
+  const out = await kanApi({ action: 'new-sprint' });
   if (out.ok) {
     const n = out.archived;
     toast(`Sprint ${out.sprint.number} started — archived ${n} card${n === 1 ? '' : 's'}${out.doneColumn ? ` from ${out.doneColumn}` : ''}`);
@@ -1715,6 +1771,7 @@ async function renderArchive(focusDate) {
     un.title = 'restore to the inbox as an open task';
     un.onclick = async () => { await api('/api/unarchive', { index: t.i }); renderArchive(); refresh(); };
     row.append(title);
+    if (t.sprint) row.append(el('span', 'sprint-badge', `🏁 ${t.sprint}`)); // which sprint it belonged to
     if (t.doneDate) row.append(el('span', 'date', `✅ ${t.doneDate}`));
     row.append(un);
     wBody.append(row);

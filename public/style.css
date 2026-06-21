@@ -276,24 +276,47 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 #kanban-filter { color: var(--yellow); }
 #kanban-newsprint { font-size: 12px; }
 
-/* sprint header: number · goal (click to edit) · dates + day-of-sprint */
+/* board tabs: one sprint board per tab, + create a new one */
+#kanban-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.kan-tab {
+  font-size: 12px; padding: 3px 12px; border-radius: 999px;
+  background: var(--bg2); border: 1px solid var(--border); color: var(--dim);
+  white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.kan-tab:hover { color: var(--fg); border-color: var(--accent); }
+.kan-tab.active { color: var(--accent); border-color: var(--accent); background: var(--bg3); font-weight: 600; }
+.kan-tab-add { color: var(--dim); border-style: dashed; }
+
+/* sprint header: name · goal (click to edit) · dates + length + day-of-sprint */
 #kanban-sprint {
   display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
   padding: 7px 12px; background: var(--bg2); border: 1px solid var(--border);
   border-radius: 8px; font-size: 13px;
 }
-.sprint-num { font-weight: 600; color: var(--accent); white-space: nowrap; }
-.sprint-goal { cursor: text; border-bottom: 1px dashed transparent; }
+.sprint-name { font-weight: 600; color: var(--accent); white-space: nowrap; cursor: text; border-bottom: 1px dashed transparent; }
+.sprint-name:hover { border-bottom-color: var(--accent); }
+.sprint-seq { color: var(--dim); font-size: 11px; }
+.sprint-goal { cursor: text; border-bottom: 1px dashed transparent; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sprint-goal:hover { border-bottom-color: var(--border); }
 .sprint-goal.empty { color: var(--dim); font-style: italic; }
-.sprint-goal-input { min-width: 220px; flex: 1; }
+.sprint-edit-input { min-width: 200px; flex: 1; }
 .sprint-dates { color: var(--dim); cursor: pointer; white-space: nowrap; }
 .sprint-dates:hover { color: var(--fg); }
 .sprint-dates-edit { display: inline-flex; align-items: center; gap: 6px; }
 .sprint-dates-edit input { padding: 1px 4px; }
+.sprint-len { width: 56px; }
+.sprint-len-unit { color: var(--dim); }
 .sprint-dash { color: var(--dim); }
 .sprint-progress { color: var(--green); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sprint-progress.ended { color: var(--red); }
+.sprint-del { font-size: 12px; padding: 2px 7px; background: none; border-color: transparent; }
+.sprint-del:hover { border-color: var(--red); color: var(--red); }
+/* archive: which sprint a card belonged to */
+.sprint-badge {
+  flex: 0 0 auto; font-size: 11px; color: var(--accent); white-space: nowrap;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 999px; padding: 1px 9px;
+}
 #kanban-board {
   flex: 1; display: flex; gap: 12px; align-items: flex-start;
   justify-content: safe center; /* centre the lists; left-align (no clipping) when they overflow */

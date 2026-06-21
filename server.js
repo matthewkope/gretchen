@@ -14,6 +14,7 @@ import {
   archiveSections, parseInput, sortTasks, taskBlocks, getTags, today,
   dateSuggestions, listProjects, projectExists, slugifyProject, PRIORITIES,
   SORT_KEYS, loadBoard, saveBoard, loadSprint, saveSprint, startNewSprint,
+  listBoards, addBoard, deleteBoard, sprintLabel,
 } from './lib/store.js';
 import {
   logEntry, timeStats, localEntries, aggregateWeek, weekRange,
@@ -115,13 +116,15 @@ function stateFor(project) {
   const tagCounts = {};
   for (const t of loadAllTasks()) for (const g of getTags(t)) tagCounts[g] = (tagCounts[g] || 0) + 1;
   // kanban-card tags count too, so they appear in the sidebar and filter; and
-  // each card is exposed (with its column) so a tag filter can list it
+  // each card is exposed (with its board + column) so a tag filter can list it
   const kanbanCards = [];
-  loadBoard().forEach((c, ci) => c.cards.forEach((card, i) => {
-    const tags = getTags(card);
-    for (const g of tags) tagCounts[g] = (tagCounts[g] || 0) + 1;
-    kanbanCards.push({ ...card, tags, column: c.name, col: ci, i });
-  }));
+  for (const bd of listBoards()) {
+    loadBoard(bd.slug).forEach((c, ci) => c.cards.forEach((card, i) => {
+      const tags = getTags(card);
+      for (const g of tags) tagCounts[g] = (tagCounts[g] || 0) + 1;
+      kanbanCards.push({ ...card, tags, column: c.name, col: ci, i, board: bd.slug, boardName: bd.name });
+    }));
+  }
   const archive = loadArchive();
   const all = [];
   for (const name of [null, ...listProjects()]) {
@@ -343,7 +346,8 @@ const routes = {
     if (!(i >= 0 && i < archive.length)) return { error: 'stale index — refresh' };
     const [t] = archive.splice(i, 1);
     saveArchive(archive);
-    saveTasks(sortTasks([...loadTasks(null), { ...t, done: false, doneDate: null }]), null);
+    // drop the sprint stamp — it's an open inbox task again, not part of a sprint
+    saveTasks(sortTasks([...loadTasks(null), { ...t, done: false, doneDate: null, sprint: null }]), null);
     return { ok: true };
   },
 
@@ -572,20 +576,34 @@ const routes = {
     return { ok: true, path: file };
   },
 
-  // the standalone kanban board (kanban.md): columns + cards + the sprint header
-  'GET /api/kanban'() {
+  // a sprint board: its columns + cards + sprint header, plus the list of all
+  // boards so the UI can render the switcher. ?board=<slug> picks the board.
+  'GET /api/kanban'(_body, query) {
+    const slug = (query?.get('board') || 'default').trim() || 'default';
+    const boards = listBoards();
+    const active = boards.find((x) => x.slug === slug) ? slug : 'default';
     return {
-      columns: loadBoard().map((c) => ({
+      board: active,
+      boards,
+      columns: loadBoard(active).map((c) => ({
         name: c.name,
         cards: c.cards.map((t, i) => ({ ...t, i, tags: getTags(t) })),
       })),
-      sprint: loadSprint(),
+      sprint: loadSprint(active),
     };
   },
 
-  // every mutation re-reads → mutates → saveBoard, like /api/op
+  // every mutation re-reads → mutates → saveBoard, like /api/op. `board` (slug)
+  // selects which sprint board to act on (default = kanban.md).
   'POST /api/kanban'(b) {
-    const board = loadBoard();
+    const slug = (b.board || 'default').trim() || 'default';
+    // board-level actions don't touch a single board's columns
+    if (b.action === 'add-board') {
+      const out = addBoard({ name: b.name || '', start: b.start, end: b.end, goal: b.goal || '' });
+      return { ok: true, ...out };
+    }
+    if (b.action === 'delete-board') return deleteBoard(slug);
+    const board = loadBoard(slug);
     const col = Number(b.col);
     const has = (idx, len) => Number.isInteger(idx) && idx >= 0 && idx < len;
     const card = (cIdx, iIdx) => has(cIdx, board.length) && has(iIdx, board[cIdx].cards.length);
@@ -646,9 +664,10 @@ const routes = {
       case 'archive-column': {
         if (!has(col, board.length)) return { error: 'stale — refresh' };
         const n = board[col].cards.length;
-        for (const card of board[col].cards) archiveTask(card); // → ~/.gretchen/archive.md
+        const label = sprintLabel(loadSprint(slug)); // stamp the sprint on each card
+        for (const card of board[col].cards) archiveTask(card, label); // → ~/.gretchen/archive.md
         board[col].cards = [];
-        saveBoard(board);
+        saveBoard(board, slug);
         return { ok: true, count: n };
       }
       case 'move-column': {
@@ -661,24 +680,25 @@ const routes = {
         board.splice(to, 0, c);
         break;
       }
-      // sprint header: patch the goal/dates/number in the frontmatter
+      // sprint header: patch the name/goal/dates/number in the frontmatter
       case 'set-sprint': {
         const patch = {};
+        if (b.name != null) patch.name = String(b.name).trim();
         if (b.goal != null) patch.goal = String(b.goal).trim();
         if (b.start != null) patch.start = String(b.start).trim();
         if (b.end != null) patch.end = String(b.end).trim();
         if (b.number != null && Number(b.number) > 0) patch.number = Number(b.number);
-        return { ok: true, sprint: saveSprint(patch) };
+        return { ok: true, sprint: saveSprint(patch, slug) };
       }
       // start the next sprint: archive Done, roll the rest forward, bump + restamp
       case 'new-sprint': {
-        const out = startNewSprint({ goal: b.goal || '', start: b.start, end: b.end });
+        const out = startNewSprint({ goal: b.goal || '', name: b.name, start: b.start, end: b.end }, slug);
         return { ok: true, ...out };
       }
       default:
         return { error: `unknown action ${b.action}` };
     }
-    saveBoard(board);
+    saveBoard(board, slug);
     return { ok: true };
   },
 
