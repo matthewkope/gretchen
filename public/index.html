@@ -28,6 +28,7 @@
         <button class="navbtn" data-view="calendar"><span class="navicon">📅</span> calendar</button>
         <button class="navbtn" data-view="kanban"><span class="navicon">📊</span> kanban</button>
         <button class="navbtn" data-view="home"><span class="navicon">🏠</span> home</button>
+        <button class="navbtn" data-view="exercises"><span class="navicon">🏋️</span> exercises</button>
         <button class="navbtn" data-view="archive"><span class="navicon">🗄️</span> archive</button>
         <button class="navbtn" data-view="time"><span class="navicon">🕐</span> time log</button>
         <button class="navbtn" data-view="settings"><span class="navicon">⚙️</span> settings</button>
@@ -91,8 +92,9 @@
           <h1>kanban</h1>
           <span id="kanban-filter" class="hidden"></span>
           <span class="spacer"></span>
-          <button id="kanban-newsprint" title="archive Done and roll the rest into a fresh sprint">＋ new sprint</button>
+          <button id="kanban-newsprint" title="archive Done and roll the rest into a fresh sprint on this board">＋ new sprint</button>
         </div>
+        <div id="kanban-tabs"></div>
         <div id="kanban-sprint"></div>
         <div id="kanban-board"></div>
       </section>
@@ -101,6 +103,11 @@
         <div id="home-banner"></div>
         <h1>home</h1>
         <div id="home-body"></div>
+      </section>
+
+      <section id="view-exercises" class="view hidden">
+        <h1>exercises</h1>
+        <div id="exercises-body" class="dim">Exercise tracking is coming soon.</div>
       </section>
 
       <section id="view-archive" class="view hidden">
